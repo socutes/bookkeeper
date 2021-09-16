@@ -27,9 +27,11 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeoutException;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.bookkeeper.common.coder.StringUtf8Coder;
 import org.apache.bookkeeper.statelib.api.StateStoreSpec;
@@ -53,8 +55,8 @@ import org.rocksdb.Checkpoint;
 public class TestStateStore {
 
     private final String dbName;
-    private final boolean removeLocal;
-    private final boolean removeRemote;
+    private boolean removeLocal;
+    private boolean removeRemote;
 
     private File localDir;
     private File localCheckpointsDir;
@@ -69,6 +71,8 @@ public class TestStateStore {
     private boolean checkpointChecksumEnable;
     private boolean checkpointChecksumCompatible;
     private boolean enableNonChecksumCompatibility;
+    private boolean localStorageCleanup;
+    private Duration checkpointRestoreIdleWait;
 
     public TestStateStore(String dbName,
                           File localDir,
@@ -82,6 +86,7 @@ public class TestStateStore {
         this.removeRemote = removeRemote;
         this.checkpointChecksumEnable = true;
         this.checkpointChecksumCompatible = true;
+        this.localStorageCleanup = false;
         localCheckpointsDir = new File(localDir, "checkpoints");
         remoteCheckpointsPath = Paths.get(remoteDir.getAbsolutePath(), dbName);
         enableNonChecksumCompatibility = false;
@@ -121,8 +126,36 @@ public class TestStateStore {
         }
     }
 
+    public void setRemoveLocal(boolean enable) {
+        removeLocal = enable;
+    }
+
+    public void setRemoveRemote(boolean enable) {
+        removeRemote = enable;
+    }
+
+    public void setLocalStorageCleanup(boolean enable) {
+        localStorageCleanup = enable;
+    }
+
+    public File getLocalCheckpointsDir() {
+        return localCheckpointsDir;
+    }
+
+    public CheckpointStore getCheckpointStore() {
+        return checkpointStore;
+    }
+
+    public void setCheckpointRestoreIdleWait(Duration d) {
+        checkpointRestoreIdleWait = d;
+    }
+
+    public CheckpointStore newCheckpointStore() {
+        return new FSCheckpointManager(remoteDir);
+    }
+
     public void init() throws StateStoreException {
-        checkpointStore = new FSCheckpointManager(remoteDir);
+        checkpointStore = newCheckpointStore();
         StateStoreSpec.StateStoreSpecBuilder builder = StateStoreSpec.builder()
             .name(dbName)
             .keyCoder(StringUtf8Coder.of())
@@ -130,10 +163,14 @@ public class TestStateStore {
             .localStateStoreDir(localDir)
             .checkpointChecksumEnable(checkpointChecksumEnable)
             .checkpointChecksumCompatible(checkpointChecksumCompatible)
+            .localStorageCleanupEnable(localStorageCleanup)
             .stream(dbName);
         if (checkpointExecutor != null) {
             builder = builder.checkpointStore(checkpointStore)
                 .checkpointIOScheduler(checkpointExecutor);
+        }
+        if (checkpointRestoreIdleWait != null) {
+            builder = builder.checkpointRestoreIdleLimit(checkpointRestoreIdleWait);
         }
         spec = builder.build();
         store = new RocksdbKVStore<>();
@@ -187,7 +224,7 @@ public class TestStateStore {
         this.init();
     }
 
-    CheckpointMetadata restore(CheckpointInfo checkpoint) throws StateStoreException {
+    CheckpointMetadata restore(CheckpointInfo checkpoint) throws StateStoreException, TimeoutException {
         try {
             MoreFiles.deleteRecursively(
                 checkpoint.getCheckpointPath(localDir),

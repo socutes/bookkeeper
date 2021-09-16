@@ -244,8 +244,6 @@ Apache Software License, Version 2.
 - lib/io.opencensus-opencensus-api-0.24.0.jar [29]
 - lib/io.opencensus-opencensus-contrib-http-util-0.24.0.jar [29]
 - lib/io.opencensus-opencensus-proto-0.2.0.jar [29]
-- lib/com.squareup.okhttp-okhttp-2.7.4.jar [30]
-- lib/com.squareup.okio-okio-1.13.0.jar [31]
 - lib/io.grpc-grpc-all-1.33.0.jar [32]
 - lib/io.grpc-grpc-alts-1.33.0.jar [32]
 - lib/io.grpc-grpc-api-1.33.0.jar [32]
@@ -254,7 +252,6 @@ Apache Software License, Version 2.
 - lib/io.grpc-grpc-core-1.33.0.jar [32]
 - lib/io.grpc-grpc-grpclb-1.33.0.jar [32]
 - lib/io.grpc-grpc-netty-1.33.0.jar [32]
-- lib/io.grpc-grpc-okhttp-1.33.0.jar [32]
 - lib/io.grpc-grpc-protobuf-1.33.0.jar [32]
 - lib/io.grpc-grpc-protobuf-lite-1.33.0.jar [32]
 - lib/io.grpc-grpc-services-1.33.0.jar [32]
@@ -264,13 +261,13 @@ Apache Software License, Version 2.
 - lib/org.apache.curator-curator-client-5.1.0.jar [33]
 - lib/org.apache.curator-curator-framework-5.1.0.jar [33]
 - lib/org.apache.curator-curator-recipes-5.1.0.jar [33]
-- lib/org.inferred-freebuilder-1.14.9.jar [34]
+- lib/org.inferred-freebuilder-2.7.0.jar [34]
 - lib/com.google.errorprone-error_prone_annotations-2.4.0.jar [35]
 - lib/org.apache.yetus-audience-annotations-0.5.0.jar [36]
 - lib/org.jctools-jctools-core-2.1.2.jar [37]
 - lib/org.apache.httpcomponents-httpclient-4.5.5.jar [38]
 - lib/org.apache.httpcomponents-httpcore-4.4.9.jar [39]
-- lib/org.apache.thrift-libthrift-0.12.0.jar [40]
+- lib/org.apache.thrift-libthrift-0.14.2.jar [40]
 - lib/com.google.android-annotations-4.1.1.4.jar [41]
 - lib/com.google.auto.value-auto-value-annotations-1.7.jar [42]
 - lib/com.google.http-client-google-http-client-1.34.0.jar [43]
@@ -303,17 +300,15 @@ Apache Software License, Version 2.
 [27] Source available at https://github.com/googleapis/googleapis
 [28] Source available at https://github.com/google/gson/tree/gson-parent-2.8.6
 [29] Source available at https://github.com/census-instrumentation/opencensus-java/tree/v0.24.0
-[30] Source available at https://github.com/square/okhttp/tree/parent-2.7.4
-[31] Source available at https://github.com/square/okio/tree/okio-parent-1.13.0
 [32] Source available at https://github.com/grpc/grpc-java/tree/v1.33.0
 [33] Source available at https://github.com/apache/curator/tree/apache-curator-5.1.0
-[34] Source available at https://github.com/inferred/FreeBuilder/tree/v1.14.9
+[34] Source available at https://github.com/inferred/FreeBuilder/tree/v2.7.0
 [35] Source available at https://github.com/google/error-prone/tree/v2.4.0
 [36] Source available at https://github.com/apache/yetus/tree/rel/0.5.0
 [37] Source available at https://github.com/JCTools/JCTools/tree/v2.1.2
 [38] Source available at https://github.com/apache/httpcomponents-client/tree/rel/v4.4.1
 [39] Source available at https://github.com/apache/httpcomponents-core/tree/rel/v4.4.1
-[40] Source available at https://github.com/apache/thrift/tree/0.12.0
+[40] Source available at https://github.com/apache/thrift/tree/0.14.2
 [41] Source available at https://source.android.com/
 [42] Source available at https://github.com/google/auto/releases/tag/auto-value-1.7
 [43] Source available at https://github.com/googleapis/google-http-java-client/releases/tag/v1.34.0
