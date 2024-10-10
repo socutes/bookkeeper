@@ -19,6 +19,7 @@
 package org.apache.bookkeeper.proto;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.apache.bookkeeper.proto.BookieProtocol.FLAG_NONE;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
@@ -44,6 +45,7 @@ import org.apache.bookkeeper.proto.BookkeeperProtocol.BKPacketHeader;
 import org.apache.bookkeeper.proto.BookkeeperProtocol.OperationType;
 import org.apache.bookkeeper.proto.BookkeeperProtocol.ProtocolVersion;
 import org.apache.bookkeeper.proto.BookkeeperProtocol.StatusCode;
+import org.apache.bookkeeper.util.ByteBufList;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -102,9 +104,9 @@ public class BookieProtoEncodingTest {
         }
         assertEquals(0, outList.size());
 
-        v3Decoder.channelRead(
-            ctx,
-            v3Encoder.encode(v3Resp, UnpooledByteBufAllocator.DEFAULT));
+        ByteBuf serWithFrameSize = (ByteBuf) v3Encoder.encode(v3Resp, UnpooledByteBufAllocator.DEFAULT);
+        ByteBuf ser = serWithFrameSize.slice(4, serWithFrameSize.readableBytes() - 4);
+        v3Decoder.channelRead(ctx, ser);
         assertEquals(1, outList.size());
     }
 
@@ -129,6 +131,38 @@ public class BookieProtoEncodingTest {
 
 
         v2ReqEncoder.decode((ByteBuf) v3ReqEncoder.encode(v3Req, UnpooledByteBufAllocator.DEFAULT));
+    }
+
+    @Test
+    public void testV2BatchReadRequest() throws Exception {
+        RequestEnDeCoderPreV3 v2ReqEncoder = new RequestEnDeCoderPreV3(registry);
+        BookieProtocol.BatchedReadRequest req = BookieProtocol.BatchedReadRequest.create(
+                BookieProtocol.CURRENT_PROTOCOL_VERSION, 1L, 1L, FLAG_NONE, null, 1L, 10, 1024L);
+        ByteBuf buf = (ByteBuf) v2ReqEncoder.encode(req, UnpooledByteBufAllocator.DEFAULT);
+        buf.readInt(); // Skip the frame size.
+        BookieProtocol.BatchedReadRequest reqDecoded = (BookieProtocol.BatchedReadRequest) v2ReqEncoder.decode(buf);
+        assertEquals(req.ledgerId, reqDecoded.ledgerId);
+        assertEquals(req.entryId, reqDecoded.entryId);
+        assertEquals(req.maxSize, reqDecoded.maxSize);
+        assertEquals(req.maxCount, reqDecoded.maxCount);
+        reqDecoded.recycle();
+    }
+
+    @Test
+    public void testV2BatchReadResponse() throws Exception {
+        ResponseEnDeCoderPreV3 v2ReqEncoder = new ResponseEnDeCoderPreV3(registry);
+        ByteBuf first = UnpooledByteBufAllocator.DEFAULT.buffer(4).writeInt(10);
+        ByteBuf second = UnpooledByteBufAllocator.DEFAULT.buffer(8).writeLong(10L);
+        ByteBufList data = ByteBufList.get(first, second);
+        BookieProtocol.BatchedReadResponse res = new BookieProtocol.BatchedReadResponse(
+                BookieProtocol.CURRENT_PROTOCOL_VERSION, 1, 1L, 1L, 1L, data);
+        ByteBuf buf = (ByteBuf) v2ReqEncoder.encode(res, UnpooledByteBufAllocator.DEFAULT);
+        buf.readInt(); // Skip the frame size.
+        BookieProtocol.BatchedReadResponse resDecoded = (BookieProtocol.BatchedReadResponse) v2ReqEncoder.decode(buf);
+        assertEquals(res.ledgerId, resDecoded.ledgerId);
+        assertEquals(res.entryId, resDecoded.entryId);
+        assertEquals(res.getData().size(), resDecoded.getData().size());
+        assertEquals(res.getData().readableBytes(), resDecoded.getData().readableBytes());
     }
 
 }

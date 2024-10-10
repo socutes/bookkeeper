@@ -19,6 +19,9 @@
 package org.apache.bookkeeper.statelib.testing.executors;
 
 import static com.google.common.base.Preconditions.checkArgument;
+import static org.hamcrest.CoreMatchers.containsString;
+import static org.hamcrest.CoreMatchers.not;
+import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
@@ -41,6 +44,7 @@ import lombok.Data;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.bookkeeper.common.concurrent.FutureUtils;
+import org.hamcrest.MatcherAssert;
 import org.mockito.stubbing.Answer;
 
 /**
@@ -49,6 +53,7 @@ import org.mockito.stubbing.Answer;
  */
 @Slf4j
 public class MockExecutorController {
+    public static final String THREAD_NAME_PREFIX = "realWriteExecutor-";
 
     @Data
     @Getter
@@ -122,13 +127,29 @@ public class MockExecutorController {
     }
 
     private void runTask(Runnable runnable) {
+        try {
+            if (null == executor) {
+                runnable.run();
+            } else {
+                MatcherAssert.assertThat("calling this on the same thread will result in deadlock",
+                        Thread.currentThread().getName(),
+                        not(containsString(THREAD_NAME_PREFIX)));
+                executor.submit(runnable).get();
+            }
+        } catch (AssertionError  ae) {
+            throw ae;
+        } catch (Throwable t) {
+            log.error("Got unexpected exception while submitting a Runnable", t);
+            fail("Got unexpected exception while submitting a Runnable " + t.getMessage());
+        }
+    }
+
+    private Future<?> runTaskAsync(Runnable runnable) {
         if (null == executor) {
             runnable.run();
+            return CompletableFuture.completedFuture(null);
         } else {
-            try {
-                executor.submit(runnable).get();
-            } catch (InterruptedException | ExecutionException e) {
-            }
+            return executor.submit(runnable);
         }
     }
 
@@ -138,7 +159,7 @@ public class MockExecutorController {
     }
 
     public MockExecutorController controlExecute(ScheduledExecutorService service) {
-        doAnswer(answerNow(this)).when(service).execute(any(Runnable.class));
+        doAnswer(answerNowAsync(this)).when(service).execute(any(Runnable.class));
         return this;
     }
 
@@ -187,6 +208,13 @@ public class MockExecutorController {
                 FutureUtils.complete(deferredTask.future, null);
             }
             return deferredTask;
+        };
+    }
+
+    private static Answer<Future<?>> answerNowAsync(MockExecutorController controller) {
+        return invocationOnMock -> {
+            Runnable task = invocationOnMock.getArgument(0);
+            return controller.runTaskAsync(task);
         };
     }
 

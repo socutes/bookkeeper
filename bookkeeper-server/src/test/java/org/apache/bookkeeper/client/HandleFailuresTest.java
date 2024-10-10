@@ -27,22 +27,20 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import com.google.common.collect.Lists;
-
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-
+import java.util.concurrent.atomic.AtomicReference;
 import org.apache.bookkeeper.client.api.LedgerMetadata;
 import org.apache.bookkeeper.client.api.WriteFlag;
 import org.apache.bookkeeper.common.concurrent.FutureUtils;
 import org.apache.bookkeeper.net.BookieId;
 import org.apache.bookkeeper.net.BookieSocketAddress;
+import org.apache.bookkeeper.proto.MockBookieClient;
 import org.apache.bookkeeper.versioning.Versioned;
-
 import org.junit.Assert;
 import org.junit.Test;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -58,7 +56,7 @@ public class HandleFailuresTest {
     private static final BookieId b4 = new BookieSocketAddress("b4", 3181).toBookieId();
     private static final BookieId b5 = new BookieSocketAddress("b5", 3181).toBookieId();
 
-    @Test
+    @Test(timeout = 30000)
     public void testChangeTriggeredOneTimeForOneFailure() throws Exception {
         MockClientContext clientCtx = MockClientContext.create();
         Versioned<LedgerMetadata> md = ClientUtil.setupLedger(clientCtx, 10L,
@@ -81,7 +79,7 @@ public class HandleFailuresTest {
         Assert.assertEquals(lh.getLedgerMetadata().getAllEnsembles().get(0L), Lists.newArrayList(b4, b2, b3));
     }
 
-    @Test
+    @Test(timeout = 30000)
     public void testSecondFailureOccursWhileFirstBeingHandled() throws Exception {
         MockClientContext clientCtx = MockClientContext.create();
         Versioned<LedgerMetadata> md = ClientUtil.setupLedger(clientCtx, 10L,
@@ -129,7 +127,7 @@ public class HandleFailuresTest {
         Assert.assertTrue(lh.getLedgerMetadata().getAllEnsembles().get(0L).contains(b5));
     }
 
-    @Test
+    @Test(timeout = 30000)
     public void testHandlingFailuresOneBookieFailsImmediately() throws Exception {
         MockClientContext clientCtx = MockClientContext.create();
         Versioned<LedgerMetadata> md = ClientUtil.setupLedger(clientCtx, 10L,
@@ -149,7 +147,7 @@ public class HandleFailuresTest {
         Assert.assertEquals(lh.getLedgerMetadata().getAllEnsembles().get(0L), Lists.newArrayList(b4, b2, b3));
     }
 
-    @Test
+    @Test(timeout = 30000)
     public void testHandlingFailuresOneBookieFailsAfterOneEntry() throws Exception {
         MockClientContext clientCtx = MockClientContext.create();
         Versioned<LedgerMetadata> md = ClientUtil.setupLedger(clientCtx, 10L,
@@ -172,8 +170,8 @@ public class HandleFailuresTest {
         Assert.assertEquals(lh.getLedgerMetadata().getLastEntryId(), 1L);
     }
 
-    @Test
-    public void testHandlingFailuresMultipleBookieFailImmediatelyNotEnoughToReplace() throws Exception {
+    @Test(timeout = 30000)
+    public void testHandlingFailuresMultipleBookieFailImmediatelyNotEnoughoReplace() throws Exception {
         MockClientContext clientCtx = MockClientContext.create();
         Versioned<LedgerMetadata> md = ClientUtil.setupLedger(clientCtx, 10L,
                                                    LedgerMetadataBuilder.create()
@@ -198,8 +196,8 @@ public class HandleFailuresTest {
         }
     }
 
-    @Test
-    public void testHandlingFailuresMultipleBookieFailAfterOneEntryNotEnoughToReplace() throws Exception {
+    @Test(timeout = 30000)
+    public void testHandlingFailuresMultipleBookieFailAfterOneEntryNotEnoughoReplace() throws Exception {
         MockClientContext clientCtx = MockClientContext.create();
         Versioned<LedgerMetadata> md = ClientUtil.setupLedger(clientCtx, 10L,
                                                    LedgerMetadataBuilder.create()
@@ -226,7 +224,7 @@ public class HandleFailuresTest {
         }
     }
 
-    @Test
+    @Test(timeout = 30000)
     public void testClientClosesWhileFailureHandlerInProgress() throws Exception {
         MockClientContext clientCtx = MockClientContext.create();
         Versioned<LedgerMetadata> md = ClientUtil.setupLedger(clientCtx, 10L,
@@ -268,7 +266,7 @@ public class HandleFailuresTest {
         Assert.assertEquals(lh.getLedgerMetadata().getLastEntryId(), LedgerHandle.INVALID_ENTRY_ID);
     }
 
-    @Test
+    @Test(timeout = 30000)
     public void testMetadataSetToClosedDuringFailureHandler() throws Exception {
         MockClientContext clientCtx = MockClientContext.create();
         Versioned<LedgerMetadata> md = ClientUtil.setupLedger(clientCtx, 10L,
@@ -312,7 +310,7 @@ public class HandleFailuresTest {
         Assert.assertEquals(lh.getLedgerMetadata().getLastEntryId(), 1234L);
     }
 
-    @Test
+    @Test(timeout = 30000)
     public void testMetadataSetToInRecoveryDuringFailureHandler() throws Exception {
         MockClientContext clientCtx = MockClientContext.create();
         Versioned<LedgerMetadata> md = ClientUtil.setupLedger(clientCtx, 10L,
@@ -354,7 +352,7 @@ public class HandleFailuresTest {
         Assert.assertEquals(lh.getLedgerMetadata().getAllEnsembles().get(0L), Lists.newArrayList(b1, b2, b3));
     }
 
-    @Test
+    @Test(timeout = 30000)
     public void testOldEnsembleChangedDuringFailureHandler() throws Exception {
         MockClientContext clientCtx = MockClientContext.create();
         Versioned<LedgerMetadata> md = ClientUtil.setupLedger(clientCtx, 10L,
@@ -407,7 +405,7 @@ public class HandleFailuresTest {
         Assert.assertEquals(lh.getLedgerMetadata().getAllEnsembles().get(2L), Lists.newArrayList(b5, b2, b4));
     }
 
-    @Test
+    @Test(timeout = 30000)
     public void testNoAddsAreCompletedWhileFailureHandlingInProgress() throws Exception {
         MockClientContext clientCtx = MockClientContext.create();
         Versioned<LedgerMetadata> md = ClientUtil.setupLedger(clientCtx, 10L,
@@ -449,7 +447,7 @@ public class HandleFailuresTest {
         Assert.assertEquals(lh.getLedgerMetadata().getAllEnsembles().get(1L), Lists.newArrayList(b1, b2, b4));
     }
 
-    @Test
+    @Test(timeout = 30000)
     public void testHandleFailureBookieNotInWriteSet() throws Exception {
         MockClientContext clientCtx = MockClientContext.create();
         Versioned<LedgerMetadata> md = ClientUtil.setupLedger(clientCtx, 10L,
@@ -484,14 +482,20 @@ public class HandleFailuresTest {
         b1Delay.completeExceptionally(new BKException.BKWriteException());
 
         log.info("write second entry, should have enough bookies, but blocks completion on failure handling");
-        CompletableFuture<?> e2 = lh.appendAsync("entry2".getBytes());
+        AtomicReference<CompletableFuture<?>> e2 = new AtomicReference<>();
+
+        // Execute appendAsync at the same thread of preWriteHook exception thread. So that the
+        // `delayedWriteFailedBookies` could update before appendAsync invoke.
+        ((MockBookieClient) clientCtx.getBookieClient()).getExecutor()
+                .chooseThread(lh.ledgerId)
+                .execute(() -> e2.set(lh.appendAsync("entry2".getBytes())));
         changeInProgress.get();
         assertEventuallyTrue("e2 should eventually complete", () -> lh.pendingAddOps.peek().completed);
-        Assert.assertFalse("e2 shouldn't be completed to client", e2.isDone());
+        Assert.assertFalse("e2 shouldn't be completed to client", e2.get().isDone());
         blockEnsembleChange.complete(null); // allow ensemble change to continue
 
         log.info("e2 should complete");
-        e2.get(10, TimeUnit.SECONDS);
+        e2.get().get(10, TimeUnit.SECONDS);
     }
 
 }

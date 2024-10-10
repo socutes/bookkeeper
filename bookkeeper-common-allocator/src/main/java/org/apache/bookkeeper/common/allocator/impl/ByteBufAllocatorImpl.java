@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -25,17 +25,18 @@ import io.netty.buffer.UnpooledByteBufAllocator;
 import io.netty.util.ResourceLeakDetector;
 import io.netty.util.ResourceLeakDetector.Level;
 import java.util.function.Consumer;
-
+import org.apache.bookkeeper.common.allocator.ByteBufAllocatorWithOomHandler;
 import org.apache.bookkeeper.common.allocator.LeakDetectionPolicy;
 import org.apache.bookkeeper.common.allocator.OutOfMemoryPolicy;
 import org.apache.bookkeeper.common.allocator.PoolingPolicy;
+import org.apache.bookkeeper.common.util.ShutdownUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
  * Implementation of {@link ByteBufAllocator}.
  */
-public class ByteBufAllocatorImpl extends AbstractByteBufAllocator implements ByteBufAllocator {
+public class ByteBufAllocatorImpl extends AbstractByteBufAllocator implements ByteBufAllocatorWithOomHandler {
 
     private static final Logger log = LoggerFactory.getLogger(ByteBufAllocatorImpl.class);
 
@@ -47,16 +48,25 @@ public class ByteBufAllocatorImpl extends AbstractByteBufAllocator implements By
     private final ByteBufAllocator unpooledAllocator;
     private final PoolingPolicy poolingPolicy;
     private final OutOfMemoryPolicy outOfMemoryPolicy;
-    private final Consumer<OutOfMemoryError> outOfMemoryListener;
+    private Consumer<OutOfMemoryError> outOfMemoryListener;
+    private final boolean exitOnOutOfMemory;
 
     ByteBufAllocatorImpl(ByteBufAllocator pooledAllocator, ByteBufAllocator unpooledAllocator,
             PoolingPolicy poolingPolicy, int poolingConcurrency, OutOfMemoryPolicy outOfMemoryPolicy,
             Consumer<OutOfMemoryError> outOfMemoryListener,
             LeakDetectionPolicy leakDetectionPolicy) {
-        super(poolingPolicy == PoolingPolicy.PooledDirect /* preferDirect */);
+        this(pooledAllocator, unpooledAllocator, poolingPolicy, poolingConcurrency, outOfMemoryPolicy,
+                outOfMemoryListener, leakDetectionPolicy, false);
+    }
 
+    ByteBufAllocatorImpl(ByteBufAllocator pooledAllocator, ByteBufAllocator unpooledAllocator,
+            PoolingPolicy poolingPolicy, int poolingConcurrency, OutOfMemoryPolicy outOfMemoryPolicy,
+            Consumer<OutOfMemoryError> outOfMemoryListener,
+            LeakDetectionPolicy leakDetectionPolicy, boolean exitOnOutOfMemory) {
+        super(poolingPolicy == PoolingPolicy.PooledDirect /* preferDirect */);
         this.poolingPolicy = poolingPolicy;
         this.outOfMemoryPolicy = outOfMemoryPolicy;
+        this.exitOnOutOfMemory = exitOnOutOfMemory;
         if (outOfMemoryListener == null) {
             this.outOfMemoryListener = (v) -> {
                 log.error("Unable to allocate memory", v);
@@ -146,7 +156,7 @@ public class ByteBufAllocatorImpl extends AbstractByteBufAllocator implements By
                     : unpooledAllocator;
             return alloc.heapBuffer(initialCapacity, maxCapacity);
         } catch (OutOfMemoryError e) {
-            outOfMemoryListener.accept(e);
+            consumeOOMError(e);
             throw e;
         }
     }
@@ -166,12 +176,12 @@ public class ByteBufAllocatorImpl extends AbstractByteBufAllocator implements By
                     try {
                         return unpooledAllocator.heapBuffer(initialCapacity, maxCapacity);
                     } catch (OutOfMemoryError e2) {
-                        outOfMemoryListener.accept(e2);
+                        consumeOOMError(e2);
                         throw e2;
                     }
                 } else {
                     // ThrowException
-                    outOfMemoryListener.accept(e);
+                    consumeOOMError(e);
                     throw e;
                 }
             }
@@ -181,14 +191,31 @@ public class ByteBufAllocatorImpl extends AbstractByteBufAllocator implements By
             try {
                 return unpooledAllocator.directBuffer(initialCapacity, maxCapacity);
             } catch (OutOfMemoryError e) {
-                outOfMemoryListener.accept(e);
-                throw e;
+                consumeOOMError(e);
+            throw e;
             }
+        }
+    }
+
+    private void consumeOOMError(OutOfMemoryError outOfMemoryError) {
+        try {
+            outOfMemoryListener.accept(outOfMemoryError);
+        } catch (Throwable e) {
+            log.warn("Consume outOfMemory error failed.", e);
+        }
+        if (exitOnOutOfMemory) {
+            log.info("Exiting JVM process for OOM error: {}", outOfMemoryError.getMessage(), outOfMemoryError);
+            ShutdownUtil.triggerImmediateForcefulShutdown();
         }
     }
 
     @Override
     public boolean isDirectBufferPooled() {
         return pooledAllocator != null && pooledAllocator.isDirectBufferPooled();
+    }
+
+    @Override
+    public void setOomHandler(Consumer<OutOfMemoryError> handler) {
+        this.outOfMemoryListener = handler;
     }
 }

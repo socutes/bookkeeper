@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,17 +19,20 @@ package org.apache.bookkeeper.proto.checksum;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
-import io.netty.buffer.CompositeByteBuf;
+import io.netty.buffer.ByteBufUtil;
+import io.netty.buffer.PooledByteBufAllocator;
 import io.netty.buffer.Unpooled;
-import io.netty.util.ReferenceCountUtil;
-
+import io.netty.util.ReferenceCounted;
+import io.netty.util.concurrent.FastThreadLocal;
 import java.security.GeneralSecurityException;
 import java.security.NoSuchAlgorithmException;
-
 import org.apache.bookkeeper.client.BKException.BKDigestMatchException;
 import org.apache.bookkeeper.client.LedgerHandle;
+import org.apache.bookkeeper.proto.BookieProtoEncoding;
+import org.apache.bookkeeper.proto.BookieProtocol;
 import org.apache.bookkeeper.proto.DataFormats.LedgerMetadataFormat.DigestType;
 import org.apache.bookkeeper.util.ByteBufList;
+import org.apache.bookkeeper.util.ByteBufVisitor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -49,16 +52,29 @@ public abstract class DigestManager {
     final long ledgerId;
     final boolean useV2Protocol;
     private final ByteBufAllocator allocator;
+    private final DigestUpdaterByteBufVisitorCallback byteBufVisitorCallback;
 
     abstract int getMacCodeLength();
 
-    void update(byte[] data) {
-        update(Unpooled.wrappedBuffer(data, 0, data.length));
+    abstract int internalUpdate(int digest, ByteBuf buffer, int offset, int len);
+
+    abstract int internalUpdate(int digest, byte[] buffer, int offset, int len);
+
+    final int update(int digest, ByteBuf buffer, int offset, int len) {
+        if (buffer.hasMemoryAddress() && acceptsMemoryAddressBuffer()) {
+            return internalUpdate(digest, buffer, offset, len);
+        } else if (buffer.hasArray()) {
+            return internalUpdate(digest, buffer.array(), buffer.arrayOffset() + offset, len);
+        } else {
+            UpdateContext updateContext = new UpdateContext(digest);
+            ByteBufVisitor.visitBuffers(buffer, offset, len, byteBufVisitorCallback, updateContext);
+            return updateContext.digest;
+        }
     }
 
-    abstract void update(ByteBuf buffer);
+    abstract void populateValueAndReset(int digest, ByteBuf buffer);
 
-    abstract void populateValueAndReset(ByteBuf buffer);
+    abstract boolean isInt32Digest();
 
     final int macCodeLength;
 
@@ -67,6 +83,7 @@ public abstract class DigestManager {
         this.useV2Protocol = useV2Protocol;
         this.macCodeLength = getMacCodeLength();
         this.allocator = allocator;
+        this.byteBufVisitorCallback = new DigestUpdaterByteBufVisitorCallback();
     }
 
     public static DigestManager instantiate(long ledgerId, byte[] passwd, DigestType digestType,
@@ -98,35 +115,70 @@ public abstract class DigestManager {
      * @param data
      * @return
      */
-    public ByteBufList computeDigestAndPackageForSending(long entryId, long lastAddConfirmed, long length,
-            ByteBuf data) {
-        ByteBuf headersBuffer;
+    public ReferenceCounted computeDigestAndPackageForSending(long entryId, long lastAddConfirmed, long length,
+                                                              ByteBuf data, byte[] masterKey, int flags) {
         if (this.useV2Protocol) {
-            headersBuffer = allocator.buffer(METADATA_LENGTH + macCodeLength);
+            return computeDigestAndPackageForSendingV2(entryId, lastAddConfirmed, length, data, masterKey, flags);
         } else {
-            headersBuffer = Unpooled.buffer(METADATA_LENGTH + macCodeLength);
+            return computeDigestAndPackageForSendingV3(entryId, lastAddConfirmed, length, data);
         }
+    }
+
+    private ReferenceCounted computeDigestAndPackageForSendingV2(long entryId, long lastAddConfirmed, long length,
+                                                                 ByteBuf data, byte[] masterKey, int flags) {
+        boolean isSmallEntry = data.readableBytes() < BookieProtoEncoding.SMALL_ENTRY_SIZE_THRESHOLD;
+
+        int headersSize = 4 // Request header
+                        + BookieProtocol.MASTER_KEY_LENGTH // for the master key
+                        + METADATA_LENGTH  //
+                        + macCodeLength;
+        int payloadSize = data.readableBytes();
+        int bufferSize = 4 + headersSize + (isSmallEntry ? payloadSize : 0);
+
+        ByteBuf buf = allocator.buffer(bufferSize, bufferSize);
+        buf.writeInt(headersSize + payloadSize);
+        buf.writeInt(
+                BookieProtocol.PacketHeader.toInt(
+                        BookieProtocol.CURRENT_PROTOCOL_VERSION, BookieProtocol.ADDENTRY, (short) flags));
+        buf.writeBytes(masterKey, 0, BookieProtocol.MASTER_KEY_LENGTH);
+
+        // The checksum is computed on the next part of the buffer only
+        buf.readerIndex(buf.writerIndex());
+        buf.writeLong(ledgerId);
+        buf.writeLong(entryId);
+        buf.writeLong(lastAddConfirmed);
+        buf.writeLong(length);
+
+        // Compute checksum over the headers
+        int digest = update(0, buf, buf.readerIndex(), buf.readableBytes());
+        digest = update(digest, data, data.readerIndex(), data.readableBytes());
+
+        populateValueAndReset(digest, buf);
+
+        // Reset the reader index to the beginning
+        buf.readerIndex(0);
+
+        if (isSmallEntry) {
+            buf.writeBytes(data, data.readerIndex(), data.readableBytes());
+            data.release();
+            return buf;
+        } else {
+            return ByteBufList.get(buf, data);
+        }
+    }
+
+    private ByteBufList computeDigestAndPackageForSendingV3(long entryId, long lastAddConfirmed, long length,
+                                                            ByteBuf data) {
+        ByteBuf headersBuffer = Unpooled.buffer(METADATA_LENGTH + macCodeLength);
         headersBuffer.writeLong(ledgerId);
         headersBuffer.writeLong(entryId);
         headersBuffer.writeLong(lastAddConfirmed);
         headersBuffer.writeLong(length);
 
-        update(headersBuffer);
-
-        // don't unwrap slices
-        final ByteBuf unwrapped = data.unwrap() != null && data.unwrap() instanceof CompositeByteBuf
-                ? data.unwrap() : data;
-        ReferenceCountUtil.retain(unwrapped);
-        ReferenceCountUtil.release(data);
-
-        if (unwrapped instanceof CompositeByteBuf) {
-            ((CompositeByteBuf) unwrapped).forEach(this::update);
-        } else {
-            update(unwrapped);
-        }
-        populateValueAndReset(headersBuffer);
-
-        return ByteBufList.get(headersBuffer, unwrapped);
+        int digest = update(0, headersBuffer, 0, METADATA_LENGTH);
+        digest = update(digest, data, data.readerIndex(), data.readableBytes());
+        populateValueAndReset(digest, headersBuffer);
+        return ByteBufList.get(headersBuffer, data);
     }
 
     /**
@@ -146,8 +198,8 @@ public abstract class DigestManager {
         headersBuffer.writeLong(ledgerId);
         headersBuffer.writeLong(lac);
 
-        update(headersBuffer);
-        populateValueAndReset(headersBuffer);
+        int digest = update(0, headersBuffer, 0, LAC_METADATA_LENGTH);
+        populateValueAndReset(digest, headersBuffer);
 
         return ByteBufList.get(headersBuffer);
     }
@@ -160,6 +212,18 @@ public abstract class DigestManager {
         verifyDigest(entryId, dataReceived, false);
     }
 
+    private static final FastThreadLocal<ByteBuf> DIGEST_BUFFER = new FastThreadLocal<ByteBuf>() {
+        @Override
+        protected ByteBuf initialValue() throws Exception {
+            return PooledByteBufAllocator.DEFAULT.directBuffer(1024);
+        }
+
+        @Override
+        protected void onRemoval(ByteBuf value) throws Exception {
+            value.release();
+        }
+    };
+
     private void verifyDigest(long entryId, ByteBuf dataReceived, boolean skipEntryIdCheck)
             throws BKDigestMatchException {
 
@@ -170,21 +234,26 @@ public abstract class DigestManager {
                     this.getClass().getName(), dataReceived.readableBytes());
             throw new BKDigestMatchException();
         }
-        update(dataReceived.slice(0, METADATA_LENGTH));
+        int digest = update(0, dataReceived, 0, METADATA_LENGTH);
 
         int offset = METADATA_LENGTH + macCodeLength;
-        update(dataReceived.slice(offset, dataReceived.readableBytes() - offset));
+        digest = update(digest, dataReceived, offset, dataReceived.readableBytes() - offset);
 
-        ByteBuf digest = allocator.buffer(macCodeLength);
-        populateValueAndReset(digest);
+        if (isInt32Digest()) {
+            int receivedDigest = dataReceived.getInt(METADATA_LENGTH);
+            if (receivedDigest != digest) {
+                logger.error("Digest mismatch for ledger-id: " + ledgerId + ", entry-id: " + entryId);
+                throw new BKDigestMatchException();
+            }
+        } else {
+            ByteBuf digestBuf = DIGEST_BUFFER.get();
+            digestBuf.clear();
+            populateValueAndReset(digest, digestBuf);
 
-        try {
-            if (digest.compareTo(dataReceived.slice(METADATA_LENGTH, macCodeLength)) != 0) {
+            if (!ByteBufUtil.equals(digestBuf, 0, dataReceived, METADATA_LENGTH, macCodeLength)) {
                 logger.error("Mac mismatch for ledger-id: " + ledgerId + ", entry-id: " + entryId);
                 throw new BKDigestMatchException();
             }
-        } finally {
-            digest.release();
         }
 
         long actualLedgerId = dataReceived.readLong();
@@ -213,18 +282,23 @@ public abstract class DigestManager {
             throw new BKDigestMatchException();
         }
 
-        update(dataReceived.slice(0, LAC_METADATA_LENGTH));
+        int digest = update(0, dataReceived, 0, LAC_METADATA_LENGTH);
 
-        ByteBuf digest = allocator.buffer(macCodeLength);
-        try {
-            populateValueAndReset(digest);
+        if (isInt32Digest()) {
+            int receivedDigest = dataReceived.getInt(LAC_METADATA_LENGTH);
+            if (receivedDigest != digest) {
+                logger.error("Digest mismatch for ledger-id LAC: " + ledgerId);
+                throw new BKDigestMatchException();
+            }
+        } else {
+            ByteBuf digestBuf = DIGEST_BUFFER.get();
+            digestBuf.clear();
+            populateValueAndReset(digest, digestBuf);
 
-            if (digest.compareTo(dataReceived.slice(LAC_METADATA_LENGTH, macCodeLength)) != 0) {
+            if (!ByteBufUtil.equals(digestBuf, 0, dataReceived, LAC_METADATA_LENGTH, macCodeLength)) {
                 logger.error("Mac mismatch for ledger-id LAC: " + ledgerId);
                 throw new BKDigestMatchException();
             }
-        } finally {
-            digest.release();
         }
 
         long actualLedgerId = dataReceived.readLong();
@@ -283,4 +357,34 @@ public abstract class DigestManager {
         long length = dataReceived.readLong();
         return new RecoveryData(lastAddConfirmed, length);
     }
+
+    private static class UpdateContext {
+        int digest;
+
+        UpdateContext(int digest) {
+            this.digest = digest;
+        }
+    }
+
+    private class DigestUpdaterByteBufVisitorCallback implements ByteBufVisitor.ByteBufVisitorCallback<UpdateContext> {
+
+        @Override
+        public void visitBuffer(UpdateContext context, ByteBuf visitBuffer, int visitIndex, int visitLength) {
+            // recursively visit the sub buffer and update the digest
+            context.digest = internalUpdate(context.digest, visitBuffer, visitIndex, visitLength);
+        }
+
+        @Override
+        public void visitArray(UpdateContext context, byte[] visitArray, int visitIndex, int visitLength) {
+            // update the digest with the array
+            context.digest = internalUpdate(context.digest, visitArray, visitIndex, visitLength);
+        }
+
+        @Override
+        public boolean acceptsMemoryAddress(UpdateContext context) {
+            return DigestManager.this.acceptsMemoryAddressBuffer();
+        }
+    }
+
+    abstract boolean acceptsMemoryAddressBuffer();
 }

@@ -38,7 +38,7 @@ import org.apache.bookkeeper.stream.proto.kv.store.CheckpointMetadata;
 
 
 /**
- * CheckpointInfo encapsulated information and operatation for a checkpoint.
+ * CheckpointInfo encapsulated information and operation for a checkpoint.
  */
 @Slf4j
 public class CheckpointInfo implements Comparable<CheckpointInfo> {
@@ -84,7 +84,7 @@ public class CheckpointInfo implements Comparable<CheckpointInfo> {
             }
             // for proper sorting
             public Long getCreatedAt() {
-                return Long.valueOf(0);
+                return 0L;
             }
         };
     }

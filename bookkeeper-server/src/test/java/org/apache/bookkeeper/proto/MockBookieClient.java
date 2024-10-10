@@ -21,11 +21,10 @@
 package org.apache.bookkeeper.proto;
 
 import static org.apache.bookkeeper.proto.BookieProtocol.FLAG_RECOVERY_ADD;
-import static org.apache.bookkeeper.util.SafeRunnable.safeRun;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
-
+import io.netty.util.ReferenceCounted;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.EnumSet;
@@ -33,7 +32,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-
+import lombok.Getter;
 import org.apache.bookkeeper.client.BKException;
 import org.apache.bookkeeper.client.api.WriteFlag;
 import org.apache.bookkeeper.common.concurrent.FutureUtils;
@@ -48,7 +47,6 @@ import org.apache.bookkeeper.proto.BookkeeperInternalCallbacks.WriteCallback;
 import org.apache.bookkeeper.proto.BookkeeperInternalCallbacks.WriteLacCallback;
 import org.apache.bookkeeper.util.AvailabilityOfEntriesOfLedger;
 import org.apache.bookkeeper.util.ByteBufList;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -59,6 +57,7 @@ import org.slf4j.LoggerFactory;
 public class MockBookieClient implements BookieClient {
     static final Logger LOG = LoggerFactory.getLogger(MockBookieClient.class);
 
+    @Getter
     final OrderedExecutor executor;
     final MockBookies mockBookies;
     final Set<BookieId> errorBookies =
@@ -71,10 +70,20 @@ public class MockBookieClient implements BookieClient {
         CompletableFuture<Void> runHook(BookieId bookie, long ledgerId, long entryId);
     }
 
+    /**
+     * Runs before or after an operation. Can stall the operation or error it.
+     */
+    public interface BatchHook {
+        CompletableFuture<Void> runHook(BookieId bookie, long ledgerId, long startEntryId, int maxCount, long maxSize);
+    }
+
     private Hook preReadHook = (bookie, ledgerId, entryId) -> FutureUtils.value(null);
     private Hook postReadHook = (bookie, ledgerId, entryId) -> FutureUtils.value(null);
     private Hook preWriteHook = (bookie, ledgerId, entryId) -> FutureUtils.value(null);
     private Hook postWriteHook = (bookie, ledgerId, entryId) -> FutureUtils.value(null);
+    private BatchHook preBatchReadHook = (bookie, ledgerId, startEntryId, maxCount, maxSize) -> FutureUtils.value(null);
+    private BatchHook postBatchReadHook = (bookie, ledgerId, startEntryId, maxCount, maxSize) -> FutureUtils.value(
+            null);
 
     public MockBookieClient(OrderedExecutor executor) {
         this.executor = executor;
@@ -140,25 +149,19 @@ public class MockBookieClient implements BookieClient {
     public void forceLedger(BookieId addr, long ledgerId,
                             ForceLedgerCallback cb, Object ctx) {
         executor.executeOrdered(ledgerId,
-                safeRun(() -> {
-                    cb.forceLedgerComplete(BKException.Code.IllegalOpException,
-                            ledgerId, addr, ctx);
-                }));
+                () -> cb.forceLedgerComplete(BKException.Code.IllegalOpException, ledgerId, addr, ctx));
     }
 
     @Override
     public void writeLac(BookieId addr, long ledgerId, byte[] masterKey,
                          long lac, ByteBufList toSend, WriteLacCallback cb, Object ctx) {
         executor.executeOrdered(ledgerId,
-                safeRun(() -> {
-                    cb.writeLacComplete(BKException.Code.IllegalOpException,
-                            ledgerId, addr, ctx);
-                }));
+                () -> cb.writeLacComplete(BKException.Code.IllegalOpException, ledgerId, addr, ctx));
     }
 
     @Override
     public void addEntry(BookieId addr, long ledgerId, byte[] masterKey,
-                         long entryId, ByteBufList toSend, WriteCallback cb, Object ctx,
+                         long entryId, ReferenceCounted toSend, WriteCallback cb, Object ctx,
                          int options, boolean allowFastFail, EnumSet<WriteFlag> writeFlags) {
         toSend.retain();
         preWriteHook.runHook(addr, ledgerId, entryId)
@@ -198,10 +201,7 @@ public class MockBookieClient implements BookieClient {
     @Override
     public void readLac(BookieId addr, long ledgerId, ReadLacCallback cb, Object ctx) {
         executor.executeOrdered(ledgerId,
-                safeRun(() -> {
-                    cb.readLacComplete(BKException.Code.IllegalOpException,
-                            ledgerId, null, null, ctx);
-                }));
+                () -> cb.readLacComplete(BKException.Code.IllegalOpException, ledgerId, null, null, ctx));
     }
 
     @Override
@@ -236,6 +236,41 @@ public class MockBookieClient implements BookieClient {
     }
 
     @Override
+    public void batchReadEntries(BookieId addr, long ledgerId, long startEntryId, int maxCount, long maxSize,
+            BookkeeperInternalCallbacks.BatchedReadEntryCallback cb, Object ctx, int flags, byte[] masterKey,
+            boolean allowFastFail) {
+        preBatchReadHook.runHook(addr, ledgerId, startEntryId, maxCount, maxSize)
+                .thenComposeAsync((res) -> {
+                    LOG.info("[{};L{}] batch read entries startEntryId:{} maxCount:{} maxSize:{}",
+                            addr, ledgerId, startEntryId, maxCount, maxSize);
+                    if (isErrored(addr)) {
+                        LOG.warn("[{};L{}] erroring batch read entries startEntryId:{} maxCount:{} maxSize:{}",
+                                addr, ledgerId, startEntryId, maxCount, maxSize);
+                        return FutureUtils.exception(new BKException.BKReadException());
+                    }
+
+                    try {
+                        ByteBufList data = mockBookies.batchReadEntries(addr, flags, ledgerId, startEntryId,
+                                maxCount, maxSize);
+                        return FutureUtils.value(data);
+                    } catch (BKException bke) {
+                        return FutureUtils.exception(bke);
+                    }
+                }, executor.chooseThread(ledgerId))
+                .thenCompose((buf) -> postBatchReadHook.runHook(addr, ledgerId, startEntryId, maxCount, maxSize)
+                        .thenApply((res) -> buf))
+                .whenCompleteAsync((res, ex) -> {
+                    if (ex != null) {
+                        cb.readEntriesComplete(BKException.getExceptionCode(ex, BKException.Code.ReadException),
+                                ledgerId, startEntryId, null, ctx);
+                    } else {
+                        cb.readEntriesComplete(BKException.Code.OK,
+                                ledgerId, startEntryId, res, ctx);
+                    }
+                }, executor.chooseThread(ledgerId));
+    }
+
+    @Override
     public void readEntryWaitForLACUpdate(BookieId addr,
                                           long ledgerId,
                                           long entryId,
@@ -245,30 +280,24 @@ public class MockBookieClient implements BookieClient {
                                           ReadEntryCallback cb,
                                           Object ctx) {
         executor.executeOrdered(ledgerId,
-                safeRun(() -> {
-                    cb.readEntryComplete(BKException.Code.IllegalOpException,
-                            ledgerId, entryId, null, ctx);
-                }));
+                () -> cb.readEntryComplete(BKException.Code.IllegalOpException, ledgerId, entryId, null, ctx));
     }
 
     @Override
     public void getBookieInfo(BookieId addr, long requested,
                               GetBookieInfoCallback cb, Object ctx) {
         executor.executeOrdered(addr,
-                safeRun(() -> {
-                    cb.getBookieInfoComplete(BKException.Code.IllegalOpException,
-                            null, ctx);
-                }));
+                () -> cb.getBookieInfoComplete(BKException.Code.IllegalOpException, null, ctx));
     }
 
     @Override
     public CompletableFuture<AvailabilityOfEntriesOfLedger> getListOfEntriesOfLedger(BookieId address,
                                                                                      long ledgerId) {
         FutureGetListOfEntriesOfLedger futureResult = new FutureGetListOfEntriesOfLedger(ledgerId);
-        executor.executeOrdered(address, safeRun(() -> {
-            futureResult
-                    .completeExceptionally(BKException.create(BKException.Code.IllegalOpException).fillInStackTrace());
-        }));
+        executor.executeOrdered(address, () ->
+                futureResult.completeExceptionally(
+                        BKException.create(BKException.Code.IllegalOpException).fillInStackTrace())
+        );
         return futureResult;
     }
 
@@ -281,11 +310,29 @@ public class MockBookieClient implements BookieClient {
     public void close() {
     }
 
-    private static ByteBuf copyData(ByteBufList list) {
-        ByteBuf buf = Unpooled.buffer(list.readableBytes());
-        for (int i = 0; i < list.size(); i++) {
-            buf.writeBytes(list.getBuffer(i).slice());
+    public static ByteBuf copyData(ReferenceCounted rc) {
+        ByteBuf res;
+        if (rc instanceof ByteBuf) {
+            res = Unpooled.copiedBuffer((ByteBuf) rc);
+        } else {
+            res = ByteBufList.coalesce((ByteBufList) rc);
         }
-        return buf;
+
+        return res;
+    }
+
+    public static ByteBuf copyDataWithSkipHeader(ReferenceCounted rc) {
+        ByteBuf res;
+        if (rc instanceof ByteBuf) {
+            res = Unpooled.copiedBuffer((ByteBuf) rc);
+        } else {
+            res = ByteBufList.coalesce((ByteBufList) rc);
+        }
+
+        // Skip headers
+        res.skipBytes(28);
+        rc.release();
+
+        return res;
     }
 }

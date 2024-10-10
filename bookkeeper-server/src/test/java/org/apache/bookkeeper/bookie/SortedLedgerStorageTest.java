@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -28,7 +28,6 @@ import static org.junit.Assert.assertTrue;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.buffer.UnpooledByteBufAllocator;
-
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -36,7 +35,6 @@ import java.util.Arrays;
 import java.util.PrimitiveIterator.OfLong;
 import java.util.function.Consumer;
 import java.util.stream.IntStream;
-
 import org.apache.bookkeeper.bookie.CheckpointSource.Checkpoint;
 import org.apache.bookkeeper.conf.ServerConfiguration;
 import org.apache.bookkeeper.conf.TestBKConfiguration;
@@ -107,8 +105,10 @@ public class SortedLedgerStorageTest {
         conf.setLedgerDirNames(new String[] { tmpDir.toString() });
         ledgerDirsManager = new LedgerDirsManager(conf, conf.getLedgerDirs(),
                 new DiskChecker(conf.getDiskUsageThreshold(), conf.getDiskUsageWarnThreshold()));
-        sortedLedgerStorage.initialize(conf, null, ledgerDirsManager, ledgerDirsManager, null, checkpointSource,
-                checkpointer, statsProvider.getStatsLogger(BOOKIE_SCOPE), UnpooledByteBufAllocator.DEFAULT);
+        sortedLedgerStorage.initialize(conf, null, ledgerDirsManager, ledgerDirsManager,
+                                       statsProvider.getStatsLogger(BOOKIE_SCOPE), UnpooledByteBufAllocator.DEFAULT);
+        sortedLedgerStorage.setCheckpointSource(checkpointSource);
+        sortedLedgerStorage.setCheckpointer(checkpointer);
     }
 
     @Test
@@ -139,7 +139,7 @@ public class SortedLedgerStorageTest {
             entriesOfLedger.forEachRemaining(addMethod);
             assertEquals("Number of entries", numWrites, arrayList.size());
             assertTrue("Entries of Ledger", IntStream.range(0, arrayList.size()).allMatch(i -> {
-                return arrayList.get(i).longValue() == (i * entriesPerWrite);
+                return arrayList.get(i) == (i * entriesPerWrite);
             }));
         }
 
@@ -187,7 +187,7 @@ public class SortedLedgerStorageTest {
             entriesOfLedger.forEachRemaining(addMethod);
             assertEquals("Number of entries", moreNumOfWrites, arrayList.size());
             assertTrue("Entries of Ledger", IntStream.range(0, arrayList.size()).allMatch(i -> {
-                return arrayList.get(i).longValue() == (i * entriesPerWrite);
+                return arrayList.get(i) == (i * entriesPerWrite);
             }));
         }
     }

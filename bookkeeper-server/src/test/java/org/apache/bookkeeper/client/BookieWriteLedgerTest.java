@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -26,8 +26,10 @@ import static org.apache.bookkeeper.client.BookKeeperClientStats.CLIENT_SCOPE;
 import static org.apache.bookkeeper.client.BookKeeperClientStats.READ_OP_DM;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+
 import com.google.common.collect.Lists;
 import io.netty.buffer.AbstractByteBufAllocator;
 import io.netty.buffer.ByteBuf;
@@ -35,9 +37,12 @@ import io.netty.buffer.PooledByteBufAllocator;
 import io.netty.buffer.Unpooled;
 import io.netty.buffer.UnpooledByteBufAllocator;
 import java.io.IOException;
+import java.net.URI;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
@@ -50,7 +55,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import org.apache.bookkeeper.bookie.BookieException;
-import org.apache.bookkeeper.bookie.BookieImpl;
+import org.apache.bookkeeper.bookie.TestBookieImpl;
 import org.apache.bookkeeper.client.AsyncCallback.AddCallback;
 import org.apache.bookkeeper.client.BKException.BKLedgerClosedException;
 import org.apache.bookkeeper.client.BookKeeper.DigestType;
@@ -58,28 +63,52 @@ import org.apache.bookkeeper.client.api.LedgerEntries;
 import org.apache.bookkeeper.client.api.ReadHandle;
 import org.apache.bookkeeper.client.api.WriteAdvHandle;
 import org.apache.bookkeeper.conf.ServerConfiguration;
+import org.apache.bookkeeper.meta.LedgerManagerFactory;
 import org.apache.bookkeeper.meta.LedgerMetadataSerDe;
+import org.apache.bookkeeper.meta.LedgerUnderreplicationManager;
 import org.apache.bookkeeper.meta.LongHierarchicalLedgerManagerFactory;
+import org.apache.bookkeeper.meta.MetadataBookieDriver;
+import org.apache.bookkeeper.meta.MetadataDrivers;
+import org.apache.bookkeeper.meta.zk.ZKMetadataDriverBase;
 import org.apache.bookkeeper.net.BookieId;
+import org.apache.bookkeeper.replication.ReplicationTestUtil;
+import org.apache.bookkeeper.replication.ReplicationWorker;
+import org.apache.bookkeeper.stats.NullStatsLogger;
 import org.apache.bookkeeper.test.BookKeeperClusterTestCase;
 import org.apache.bookkeeper.test.TestStatsProvider;
+import org.apache.bookkeeper.util.BookKeeperConstants;
 import org.apache.commons.lang3.tuple.Pair;
-import org.apache.zookeeper.KeeperException;
+import org.awaitility.Awaitility;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-import org.powermock.reflect.Whitebox;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
  * Testing ledger write entry cases.
  */
+@RunWith(Parameterized.class)
 public class BookieWriteLedgerTest extends
     BookKeeperClusterTestCase implements AddCallback {
 
     private static final Logger LOG = LoggerFactory
             .getLogger(BookieWriteLedgerTest.class);
+
+    @Parameterized.Parameters
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][] {
+            { true, true }, { true, false }, { false, true }, { false, false }
+        });
+    }
+
+    @Parameterized.Parameter(0)
+    public boolean useV2;
+
+    @Parameterized.Parameter(1)
+    public boolean writeJournal;
 
     byte[] ledgerPassword = "aaa".getBytes();
     LedgerHandle lh, lh2;
@@ -106,6 +135,9 @@ public class BookieWriteLedgerTest extends
     @Override
     @Before
     public void setUp() throws Exception {
+        baseConf.setJournalWriteData(writeJournal);
+        baseClientConf.setUseV2WireProtocol(useV2);
+
         super.setUp();
         rng = new Random(0); // Initialize the Random
         // Number Generator
@@ -434,7 +466,7 @@ public class BookieWriteLedgerTest extends
     }
 
     /**
-     * Verify that LedgerHandleAdv cannnot handle addEntry without the entryId.
+     * Verify that LedgerHandleAdv cannot handle addEntry without the entryId.
      *
      * @throws Exception
      */
@@ -732,7 +764,7 @@ public class BookieWriteLedgerTest extends
                         .withDigestType(org.apache.bookkeeper.client.api.DigestType.CRC32)
                         .withPassword(ledgerPassword).makeAdv().withLedgerId(ledgerId)
                         .execute()
-                        .thenApply(writer -> { // Add entries to ledger when created
+                        .thenCompose(writer -> { // Add entries to ledger when created
                                 LOG.info("Writing stream of {} entries to {}",
                                          numEntriesToWrite, ledgerId);
                                 List<ByteBuf> entries = rng.ints(numEntriesToWrite, 0, maxInt)
@@ -751,8 +783,8 @@ public class BookieWriteLedgerTest extends
                                              ledgerId, entryId, entry.slice().readInt());
                                     lastRequest = writer.writeAsync(entryId, entry);
                                 }
-                                lastRequest.join();
-                                return Pair.of(writer, entries);
+                                return lastRequest
+                                        .thenApply(___ -> Pair.of(writer, entries));
                             });
                 })
             .parallel().map(CompletableFuture::join) // wait for all creations and adds in parallel
@@ -815,7 +847,9 @@ public class BookieWriteLedgerTest extends
                 ledgerId %= 9999999999L;
             }
 
-            LOG.debug("Iteration: {}  LedgerId: {}", lc, ledgerId);
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Iteration: {}  LedgerId: {}", lc, ledgerId);
+            }
             lh = bkc.createLedgerAdv(ledgerId, 5, 3, 2, digestType, ledgerPassword, null);
             lhArray[lc] = lh;
 
@@ -842,7 +876,9 @@ public class BookieWriteLedgerTest extends
         for (int lc = 0; lc < ledgerCount; lc++) {
             // Read and verify
             long lid = lhArray[lc].getId();
-            LOG.debug("readEntries for lc: {} ledgerId: {} ", lc, lhArray[lc].getId());
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("readEntries for lc: {} ledgerId: {} ", lc, lhArray[lc].getId());
+            }
             readEntriesAndValidateDataArray(lhArray[lc], entryList.get(lc));
             lhArray[lc].close();
             bkc.deleteLedger(lid);
@@ -901,7 +937,9 @@ public class BookieWriteLedgerTest extends
         // wait for all entries to be acknowledged for the first ledger
         synchronized (syncObj1) {
             while (syncObj1.counter < 1) {
-                LOG.debug("Entries counter = " + syncObj1.counter);
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("Entries counter = " + syncObj1.counter);
+                }
                 syncObj1.wait();
             }
             assertEquals(BKException.Code.OK, syncObj1.rc);
@@ -909,7 +947,9 @@ public class BookieWriteLedgerTest extends
         // wait for all entries to be acknowledged for the second ledger
         synchronized (syncObj2) {
             while (syncObj2.counter < 1) {
-                LOG.debug("Entries counter = " + syncObj2.counter);
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("Entries counter = " + syncObj2.counter);
+                }
                 syncObj2.wait();
             }
             assertEquals(BKException.Code.OK, syncObj2.rc);
@@ -1004,7 +1044,7 @@ public class BookieWriteLedgerTest extends
         lh.asyncAddEntry(10, entry1.array(), 0, entry1.capacity(), this, syncObj1);
 
         // Make sure entry-10 goes to the bookies and gets response.
-        java.util.Queue<PendingAddOp> myPendingAddOps = Whitebox.getInternalState(lh, "pendingAddOps");
+        java.util.Queue<PendingAddOp> myPendingAddOps = lh.getPendingAddOps();
         PendingAddOp addOp = null;
         boolean pendingAddOpReceived = false;
 
@@ -1427,6 +1467,68 @@ public class BookieWriteLedgerTest extends
     }
 
     @Test
+    public void testReadLacNotSameWithMetadataLedgerReplication() throws Exception {
+       lh = bkc.createLedger(3, 3, 2, digestType, ledgerPassword);
+        for (int i = 0; i < 10; ++i) {
+            ByteBuffer entry = ByteBuffer.allocate(4);
+            entry.putInt(rng.nextInt(maxInt));
+            entry.position(0);
+            lh.addEntry(entry.array());
+        }
+
+        List<BookieId> ensemble = lh.getLedgerMetadata().getAllEnsembles().entrySet().iterator().next().getValue();
+        assertEquals(1, lh.getLedgerMetadata().getAllEnsembles().size());
+        killBookie(ensemble.get(1));
+
+        try {
+            lh.ensembleChangeLoop(ensemble, Collections.singletonMap(1, ensemble.get(1)));
+        } catch (Exception e) {
+            fail();
+        }
+
+        LedgerHandle lh1 = bkc.openLedgerNoRecovery(lh.ledgerId, digestType, ledgerPassword);
+        assertEquals(2, lh1.getLedgerMetadata().getAllEnsembles().size());
+        List<BookieId> firstEnsemble = lh1.getLedgerMetadata().getAllEnsembles().firstEntry().getValue();
+
+        long entryId = lh1.getLedgerMetadata().getAllEnsembles().lastEntry().getKey() - 1;
+        try {
+            lh1.readAsync(entryId, entryId).get();
+            fail();
+        } catch (Exception e) {
+            LOG.info("Failed to read entry: {} ", entryId, e);
+        }
+
+        MetadataBookieDriver driver = MetadataDrivers.getBookieDriver(
+            URI.create(baseConf.getMetadataServiceUri()));
+        driver.initialize(
+            baseConf,
+            NullStatsLogger.INSTANCE);
+        // initialize urReplicationManager
+        LedgerManagerFactory mFactory = driver.getLedgerManagerFactory();
+        LedgerUnderreplicationManager underReplicationManager = mFactory.newLedgerUnderreplicationManager();
+        baseConf.setOpenLedgerRereplicationGracePeriod(String.valueOf(30));
+
+
+        ReplicationWorker replicationWorker = new ReplicationWorker(baseConf);
+        replicationWorker.start();
+        String basePath = ZKMetadataDriverBase.resolveZkLedgersRootPath(baseClientConf) + '/'
+            + BookKeeperConstants.UNDER_REPLICATION_NODE
+            + BookKeeperConstants.DEFAULT_ZK_LEDGERS_ROOT_PATH;
+
+        try {
+            underReplicationManager.markLedgerUnderreplicated(lh1.getId(), ensemble.get(1).toString());
+
+            Awaitility.waitAtMost(30, TimeUnit.SECONDS).untilAsserted(() ->
+                assertFalse(ReplicationTestUtil.isLedgerInUnderReplication(zkc, lh1.getId(), basePath))
+            );
+
+            assertNotEquals(firstEnsemble, lh1.getLedgerMetadata().getAllEnsembles().firstEntry().getValue());
+        } finally {
+            replicationWorker.shutdown();
+        }
+    }
+
+    @Test
     public void testLedgerMetadataTest() throws Exception {
         baseClientConf.setLedgerMetadataFormatVersion(LedgerMetadataSerDe.METADATA_FORMAT_VERSION_2);
         BookKeeperTestClient bkc = new BookKeeperTestClient(baseClientConf, new TestStatsProvider());
@@ -1443,10 +1545,12 @@ public class BookieWriteLedgerTest extends
             ByteBuffer origbb = ByteBuffer.wrap(entries.get(index++));
             Integer origEntry = origbb.getInt();
             ByteBuffer result = ByteBuffer.wrap(ls.nextElement().getEntry());
-            LOG.debug("Length of result: " + result.capacity());
-            LOG.debug("Original entry: " + origEntry);
             Integer retrEntry = result.getInt();
-            LOG.debug("Retrieved entry: " + retrEntry);
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Length of result: " + result.capacity());
+                LOG.debug("Original entry: " + origEntry);
+                LOG.debug("Retrieved entry: " + retrEntry);
+            }
             assertTrue("Checking entry " + index + " for equality", origEntry
                     .equals(retrEntry));
         }
@@ -1473,8 +1577,10 @@ public class BookieWriteLedgerTest extends
         while (ls.hasMoreElements()) {
             byte[] originalData = entries.get(index++);
             byte[] receivedData = ls.nextElement().getEntry();
-            LOG.debug("Length of originalData: {}", originalData.length);
-            LOG.debug("Length of receivedData: {}", receivedData.length);
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Length of originalData: {}", originalData.length);
+                LOG.debug("Length of receivedData: {}", receivedData.length);
+            }
             assertEquals(
                     String.format("LedgerID: %d EntryID: %d OriginalDataLength: %d ReceivedDataLength: %d", lh.getId(),
                             (index - 1), originalData.length, receivedData.length),
@@ -1495,18 +1601,18 @@ public class BookieWriteLedgerTest extends
         }
     }
 
-    static class CorruptReadBookie extends BookieImpl {
+    static class CorruptReadBookie extends TestBookieImpl {
 
         static final Logger LOG = LoggerFactory.getLogger(CorruptReadBookie.class);
         ByteBuf localBuf;
 
         public CorruptReadBookie(ServerConfiguration conf)
-                throws IOException, KeeperException, InterruptedException, BookieException {
+                throws Exception {
             super(conf);
         }
 
         @Override
-        public ByteBuf readEntry(long ledgerId, long entryId) throws IOException, NoLedgerException {
+        public ByteBuf readEntry(long ledgerId, long entryId) throws IOException, NoLedgerException, BookieException {
             localBuf = super.readEntry(ledgerId, entryId);
 
             int capacity = 0;

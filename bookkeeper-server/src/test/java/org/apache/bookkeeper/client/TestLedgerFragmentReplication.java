@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -25,7 +25,6 @@ import static org.junit.Assert.fail;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
-
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.Enumeration;
@@ -36,7 +35,6 @@ import java.util.Set;
 import java.util.SortedMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.function.BiConsumer;
-
 import org.apache.bookkeeper.client.BookKeeper.DigestType;
 import org.apache.bookkeeper.client.api.LedgerMetadata;
 import org.apache.bookkeeper.client.api.WriteFlag;
@@ -265,6 +263,8 @@ public class TestLedgerFragmentReplication extends BookKeeperClusterTestCase {
         testSplitIntoSubFragments(22, 103, 11, 8, lh);
         testSplitIntoSubFragments(49, 51, 1, 3, lh);
         testSplitIntoSubFragments(11, 101, 3, 31, lh);
+        testSplitIntoSubFragments(0, -1, 1, 1, lh);
+        testSplitIntoSubFragments(0, -1, 10, 1, lh);
     }
 
     /**
@@ -274,17 +274,7 @@ public class TestLedgerFragmentReplication extends BookKeeperClusterTestCase {
             final long oriFragmentLastEntry, long entriesPerSubFragment,
             long expectedSubFragments, LedgerHandle lh) {
         LedgerFragment fr = new LedgerFragment(lh, oriFragmentFirstEntry,
-                oriFragmentLastEntry, Sets.newHashSet(0)) {
-            @Override
-            public long getLastStoredEntryId() {
-                return oriFragmentLastEntry;
-            }
-
-            @Override
-            public long getFirstStoredEntryId() {
-                return oriFragmentFirstEntry;
-            }
-        };
+                oriFragmentLastEntry, Sets.newHashSet(0));
         Set<LedgerFragment> subFragments = LedgerFragmentReplicator
                 .splitIntoSubFragments(lh, fr, entriesPerSubFragment);
         assertEquals(expectedSubFragments, subFragments.size());
@@ -391,23 +381,23 @@ public class TestLedgerFragmentReplication extends BookKeeperClusterTestCase {
          * In the second sub-fragment firstEntryID, firstStoredEntryId,
          * lastKnownEntryID and lastStoredEntryId should be 10.
          */
-        Set<LedgerFragment> partionedFragments = LedgerFragmentReplicator.splitIntoSubFragments(lh, lfrag,
+        Set<LedgerFragment> partitionedFragments = LedgerFragmentReplicator.splitIntoSubFragments(lh, lfrag,
                 rereplicationEntryBatchSize);
-        assertEquals("Number of sub-fragments", 2, partionedFragments.size());
-        for (LedgerFragment partionedFragment : partionedFragments) {
-            if (partionedFragment.getFirstEntryId() == 0) {
-                validateEntryIds(partionedFragment, 0, 0, 9, 8);
+        assertEquals("Number of sub-fragments", 2, partitionedFragments.size());
+        for (LedgerFragment partitionedFragment : partitionedFragments) {
+            if (partitionedFragment.getFirstEntryId() == 0) {
+                validateEntryIds(partitionedFragment, 0, 0, 9, 8);
             } else {
-                validateEntryIds(partionedFragment, 10, 10, 10, 10);
+                validateEntryIds(partitionedFragment, 10, 10, 10, 10);
             }
         }
     }
 
-    private void validateEntryIds(LedgerFragment partionedFragment, long expectedFirstEntryId,
+    private void validateEntryIds(LedgerFragment partitionedFragment, long expectedFirstEntryId,
             long expectedFirstStoredEntryId, long expectedLastKnownEntryID, long expectedLastStoredEntryId) {
-        assertEquals("FirstEntryId", expectedFirstEntryId, partionedFragment.getFirstEntryId());
-        assertEquals("FirstStoredEntryId", expectedFirstStoredEntryId, partionedFragment.getFirstStoredEntryId());
-        assertEquals("LastKnownEntryID", expectedLastKnownEntryID, partionedFragment.getLastKnownEntryId());
-        assertEquals("LastStoredEntryId", expectedLastStoredEntryId, partionedFragment.getLastStoredEntryId());
+        assertEquals("FirstEntryId", expectedFirstEntryId, partitionedFragment.getFirstEntryId());
+        assertEquals("FirstStoredEntryId", expectedFirstStoredEntryId, partitionedFragment.getFirstStoredEntryId());
+        assertEquals("LastKnownEntryID", expectedLastKnownEntryID, partitionedFragment.getLastKnownEntryId());
+        assertEquals("LastStoredEntryId", expectedLastStoredEntryId, partitionedFragment.getLastStoredEntryId());
     }
 }

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -28,7 +28,7 @@ import org.apache.distributedlog.util.Allocator;
 public interface LedgerAllocator extends Allocator<LedgerHandle, Object> {
 
     /**
-     * Start the ledger allocator. The implementaion should not be blocking call.
+     * Start the ledger allocator. The implementation should not be blocking call.
      */
     void start() throws IOException;
 

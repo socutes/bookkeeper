@@ -22,7 +22,6 @@ package org.apache.bookkeeper.client;
 
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
-
 import org.apache.bookkeeper.conf.ClientConfiguration;
 import org.apache.bookkeeper.feature.Feature;
 import org.apache.bookkeeper.feature.FeatureProvider;
@@ -49,6 +48,8 @@ class ClientInternalConf {
     final boolean enableBookieFailureTracking;
     final boolean useV2WireProtocol;
     final boolean enforceMinNumFaultDomainsForWrite;
+    final boolean batchReadEnabled;
+    final int nettyMaxFrameSizeBytes;
 
     static ClientInternalConf defaultValues() {
         return fromConfig(new ClientConfiguration());
@@ -73,9 +74,9 @@ class ClientInternalConf {
         this.addEntryQuorumTimeoutNanos = TimeUnit.SECONDS.toNanos(conf.getAddEntryQuorumTimeout());
         this.throttleValue = conf.getThrottleValue();
         this.bookieFailureHistoryExpirationMSec = conf.getBookieFailureHistoryExpirationMSec();
-
+        this.batchReadEnabled = conf.isBatchReadEnabled();
+        this.nettyMaxFrameSizeBytes = conf.getNettyMaxFrameSizeBytes();
         this.disableEnsembleChangeFeature = featureProvider.getFeature(conf.getDisableEnsembleChangeFeatureName());
-
         this.delayEnsembleChange = conf.getDelayEnsembleChange();
         this.maxAllowedEnsembleChanges = conf.getMaxAllowedEnsembleChanges();
         this.timeoutMonitorIntervalSec = conf.getTimeoutMonitorIntervalSec();

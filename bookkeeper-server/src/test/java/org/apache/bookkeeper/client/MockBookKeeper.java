@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,19 +19,15 @@
 package org.apache.bookkeeper.client;
 
 import io.netty.util.concurrent.DefaultThreadFactory;
-
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-
 import org.apache.bookkeeper.client.AsyncCallback.CreateCallback;
 import org.apache.bookkeeper.client.AsyncCallback.DeleteCallback;
 import org.apache.bookkeeper.client.AsyncCallback.OpenCallback;
@@ -39,6 +35,7 @@ import org.apache.bookkeeper.client.api.BKException.Code;
 import org.apache.bookkeeper.client.api.OpenBuilder;
 import org.apache.bookkeeper.client.api.ReadHandle;
 import org.apache.bookkeeper.client.impl.OpenBuilderBase;
+import org.apache.bookkeeper.common.util.OrderedExecutor;
 import org.apache.bookkeeper.conf.ClientConfiguration;
 import org.apache.zookeeper.ZooKeeper;
 import org.slf4j.Logger;
@@ -51,13 +48,11 @@ import org.slf4j.LoggerFactory;
  */
 public class MockBookKeeper extends BookKeeper {
 
-    final ExecutorService executor = Executors.newFixedThreadPool(1, new DefaultThreadFactory("mock-bookkeeper"));
+    final OrderedExecutor orderedExecutor = OrderedExecutor.newBuilder()
+            .numThreads(1)
+            .threadFactory(new DefaultThreadFactory("mock-bookkeeper"))
+            .build();
     final ZooKeeper zkc;
-
-    @Override
-    public ZooKeeper getZkHandle() {
-        return zkc;
-    }
 
     @Override
     public ClientConfiguration getConf() {
@@ -73,6 +68,11 @@ public class MockBookKeeper extends BookKeeper {
 
     public MockBookKeeper(ZooKeeper zkc) throws Exception {
         this.zkc = zkc;
+    }
+
+    @Override
+    public OrderedExecutor getMainWorkerPool() {
+        return orderedExecutor;
     }
 
     @Override
@@ -93,7 +93,7 @@ public class MockBookKeeper extends BookKeeper {
             return;
         }
 
-        executor.execute(new Runnable() {
+        orderedExecutor.chooseThread().execute(new Runnable() {
             public void run() {
                 if (getProgrammedFailStatus()) {
                     if (failReturnCode != BkTimeoutOperation) {
@@ -112,9 +112,9 @@ public class MockBookKeeper extends BookKeeper {
                     log.info("Creating ledger {}", id);
                     MockLedgerHandle lh = new MockLedgerHandle(MockBookKeeper.this, id, digestType, passwd);
                     ledgers.put(id, lh);
-                    cb.createComplete(0, lh, ctx);
+                    lh.executeOrdered(() -> cb.createComplete(0, lh, ctx));
                 } catch (Throwable t) {
-                    t.printStackTrace();
+                    log.error("Error", t);
                 }
             }
         });
@@ -169,7 +169,7 @@ public class MockBookKeeper extends BookKeeper {
         } else if (!Arrays.equals(lh.passwd, passwd)) {
             cb.openComplete(BKException.Code.UnauthorizedAccessException, null, ctx);
         } else {
-            cb.openComplete(0, lh, ctx);
+            lh.executeOrdered(() -> cb.openComplete(0, lh, ctx));
         }
     }
 
@@ -263,7 +263,7 @@ public class MockBookKeeper extends BookKeeper {
         }
 
         ledgers.clear();
-        executor.shutdownNow();
+        orderedExecutor.shutdownNow();
     }
 
     public boolean isStopped() {
@@ -276,7 +276,9 @@ public class MockBookKeeper extends BookKeeper {
 
     void checkProgrammedFail() throws BKException {
         int steps = stepsToFail.getAndDecrement();
-        log.debug("Steps to fail: {}", steps);
+        if (log.isDebugEnabled()) {
+            log.debug("Steps to fail: {}", steps);
+        }
         if (steps <= 0) {
             if (failReturnCode != BKException.Code.OK) {
                 int rc = failReturnCode;
@@ -289,7 +291,9 @@ public class MockBookKeeper extends BookKeeper {
 
     boolean getProgrammedFailStatus() {
         int steps = stepsToFail.getAndDecrement();
-        log.debug("Steps to fail: {}", steps);
+        if (log.isDebugEnabled()) {
+            log.debug("Steps to fail: {}", steps);
+        }
         return steps == 0;
     }
 

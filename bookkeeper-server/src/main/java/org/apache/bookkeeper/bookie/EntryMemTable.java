@@ -29,14 +29,13 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-
 import org.apache.bookkeeper.bookie.Bookie.NoLedgerException;
 import org.apache.bookkeeper.bookie.CheckpointSource.Checkpoint;
 import org.apache.bookkeeper.bookie.stats.EntryMemTableStats;
+import org.apache.bookkeeper.common.util.MathUtils;
 import org.apache.bookkeeper.conf.ServerConfiguration;
 import org.apache.bookkeeper.stats.StatsLogger;
 import org.apache.bookkeeper.util.IteratorUtility;
-import org.apache.bookkeeper.util.MathUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -259,7 +258,7 @@ public class EntryMemTable implements AutoCloseable{
                             }
                         }
                     }
-                    memTableStats.getFlushBytesCounter().add(size);
+                    memTableStats.getFlushBytesCounter().addCount(size);
                     clearSnapshot(keyValues);
                 }
             }
@@ -320,6 +319,9 @@ public class EntryMemTable implements AutoCloseable{
             try {
                 EntryKeyValue toAdd = cloneWithAllocator(ledgerId, entryId, entry);
                 size = internalAdd(toAdd);
+                if (size == 0) {
+                    skipListSemaphore.release(len);
+                }
             } finally {
                 this.lock.readLock().unlock();
             }

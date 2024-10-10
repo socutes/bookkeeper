@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,7 +19,6 @@
 package org.apache.bookkeeper.util;
 
 import com.google.common.annotations.VisibleForTesting;
-
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.FileStore;
@@ -27,7 +26,6 @@ import java.nio.file.Files;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -177,7 +175,7 @@ public class DiskChecker {
      * Calculate the total amount of free space available
      * in all of the ledger directories put together.
      *
-     * @return totalDiskSpace in bytes
+     * @return freeDiskSpace in bytes
      * @throws IOException
      */
     public long getTotalFreeSpace(List<File> dirs) throws IOException {
@@ -193,10 +191,10 @@ public class DiskChecker {
     }
 
     /**
-     * Calculate the total amount of free space available
+     * Calculate the total amount of disk space
      * in all of the ledger directories put together.
      *
-     * @return freeDiskSpace in bytes
+     * @return totalDiskSpace in bytes
      * @throws IOException
      */
     public long getTotalDiskSpace(List<File> dirs) throws IOException {
@@ -246,21 +244,21 @@ public class DiskChecker {
         float usage = checkDiskFull(dir);
         if (!mkdirsWithExistsCheck(dir)) {
             throw new DiskErrorException("can not create directory: "
-                    + dir.toString());
+                    + dir);
         }
 
         if (!dir.isDirectory()) {
-            throw new DiskErrorException("not a directory: " + dir.toString());
+            throw new DiskErrorException("not a directory: " + dir);
         }
 
         if (!dir.canRead()) {
             throw new DiskErrorException("directory is not readable: "
-                    + dir.toString());
+                    + dir);
         }
 
         if (!dir.canWrite()) {
             throw new DiskErrorException("directory is not writable: "
-                    + dir.toString());
+                    + dir);
         }
         return usage;
     }
@@ -278,7 +276,7 @@ public class DiskChecker {
 
     private void validateThreshold(float diskSpaceThreshold, float diskSpaceWarnThreshold) {
         if (diskSpaceThreshold <= 0 || diskSpaceThreshold >= 1 || diskSpaceWarnThreshold - diskSpaceThreshold > 1e-6) {
-            throw new IllegalArgumentException("Disk space threashold: "
+            throw new IllegalArgumentException("Disk space threshold: "
                     + diskSpaceThreshold + " and warn threshold: " + diskSpaceWarnThreshold
                     + " are not valid. Should be > 0 and < 1 and diskSpaceThreshold >= diskSpaceWarnThreshold");
         }

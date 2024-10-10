@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -20,43 +20,55 @@
  */
 package org.apache.bookkeeper.http.vertx;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.netty.handler.codec.http.HttpHeaderNames;
 import io.vertx.core.Handler;
+import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.ext.web.RoutingContext;
-
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
-
 import org.apache.bookkeeper.http.HttpServer;
-import org.apache.bookkeeper.http.service.ErrorHttpService;
 import org.apache.bookkeeper.http.service.HttpEndpointService;
 import org.apache.bookkeeper.http.service.HttpServiceRequest;
 import org.apache.bookkeeper.http.service.HttpServiceResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Http Handler for Vertx based Http Server.
  */
 public abstract class VertxAbstractHandler implements Handler<RoutingContext> {
 
+    private static final Logger LOG = LoggerFactory.getLogger(VertxAbstractHandler.class);
+
     /**
      * Process the request using the given httpEndpointService.
      */
+    @SuppressFBWarnings("DCN_NULLPOINTER_EXCEPTION")
     void processRequest(HttpEndpointService httpEndpointService, RoutingContext context) {
         HttpServerRequest httpRequest = context.request();
         HttpServerResponse httpResponse = context.response();
         HttpServiceRequest request = new HttpServiceRequest()
             .setMethod(convertMethod(httpRequest))
             .setParams(convertParams(httpRequest))
-            .setBody(context.getBodyAsString());
-        HttpServiceResponse response = null;
+            .setBody(context.body().asString());
+        HttpServiceResponse response;
         try {
             response = httpEndpointService.handle(request);
+        } catch (NullPointerException | IllegalArgumentException e) {
+            LOG.error("Vertx handler failed to process request {}, cause {}", request.toString(), e);
+            throw new RuntimeException(e);
         } catch (Exception e) {
-            response = new ErrorHttpService().handle(request);
+            LOG.error("Exception in vertx handler", e);
+            throw new RuntimeException(e);
         }
         httpResponse.setStatusCode(response.getStatusCode());
+        if (response.getContentType() != null) {
+            httpResponse.putHeader(HttpHeaderNames.CONTENT_TYPE, response.getContentType());
+        }
         httpResponse.end(response.getBody());
     }
 
@@ -79,15 +91,14 @@ public abstract class VertxAbstractHandler implements Handler<RoutingContext> {
      * can be recognized by HttpServer.
      */
     HttpServer.Method convertMethod(HttpServerRequest request) {
-        switch (request.method()) {
-            case POST:
-                return HttpServer.Method.POST;
-            case DELETE:
-                return HttpServer.Method.DELETE;
-            case PUT:
-                return HttpServer.Method.PUT;
-            default:
-                return HttpServer.Method.GET;
+        HttpMethod method = request.method();
+        if (HttpMethod.POST.equals(method)) {
+            return HttpServer.Method.POST;
+        } else if (HttpMethod.DELETE.equals(method)) {
+            return HttpServer.Method.DELETE;
+        } else if (HttpMethod.PUT.equals(method)) {
+            return HttpServer.Method.PUT;
         }
+        return HttpServer.Method.GET;
     }
 }

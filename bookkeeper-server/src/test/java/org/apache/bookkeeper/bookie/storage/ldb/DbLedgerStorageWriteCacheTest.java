@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -22,19 +22,18 @@ package org.apache.bookkeeper.bookie.storage.ldb;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
+
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.buffer.Unpooled;
 import java.io.File;
 import java.io.IOException;
-import java.util.concurrent.ScheduledExecutorService;
 import org.apache.bookkeeper.bookie.Bookie;
 import org.apache.bookkeeper.bookie.BookieException.OperationRejectedException;
 import org.apache.bookkeeper.bookie.BookieImpl;
-import org.apache.bookkeeper.bookie.CheckpointSource;
-import org.apache.bookkeeper.bookie.Checkpointer;
 import org.apache.bookkeeper.bookie.LedgerDirsManager;
-import org.apache.bookkeeper.bookie.StateManager;
+import org.apache.bookkeeper.bookie.TestBookieImpl;
+import org.apache.bookkeeper.bookie.storage.EntryLogger;
 import org.apache.bookkeeper.conf.ServerConfiguration;
 import org.apache.bookkeeper.conf.TestBKConfiguration;
 import org.apache.bookkeeper.meta.LedgerManager;
@@ -55,24 +54,25 @@ public class DbLedgerStorageWriteCacheTest {
 
         @Override
         protected SingleDirectoryDbLedgerStorage newSingleDirectoryDbLedgerStorage(ServerConfiguration conf,
-                LedgerManager ledgerManager, LedgerDirsManager ledgerDirsManager, LedgerDirsManager indexDirsManager,
-                StateManager stateManager, CheckpointSource checkpointSource, Checkpointer checkpointer,
-                StatsLogger statsLogger, ScheduledExecutorService gcExecutor,
-                long writeCacheSize, long readCacheSize)
+            LedgerManager ledgerManager, LedgerDirsManager ledgerDirsManager, LedgerDirsManager indexDirsManager,
+            EntryLogger entryLogger, StatsLogger statsLogger,
+            long writeCacheSize, long readCacheSize, int readAheadCacheBatchSize, long readAheadCacheBatchBytesSize)
                 throws IOException {
             return new MockedSingleDirectoryDbLedgerStorage(conf, ledgerManager, ledgerDirsManager, indexDirsManager,
-                    stateManager, checkpointSource, checkpointer, statsLogger, allocator, gcExecutor, writeCacheSize,
-                    readCacheSize);
+                entryLogger, statsLogger, allocator, writeCacheSize,
+                readCacheSize, readAheadCacheBatchSize, readAheadCacheBatchBytesSize);
         }
 
         private static class MockedSingleDirectoryDbLedgerStorage extends SingleDirectoryDbLedgerStorage {
             public MockedSingleDirectoryDbLedgerStorage(ServerConfiguration conf, LedgerManager ledgerManager,
-                    LedgerDirsManager ledgerDirsManager, LedgerDirsManager indexDirsManager, StateManager stateManager,
-                    CheckpointSource checkpointSource, Checkpointer checkpointer, StatsLogger statsLogger,
-                    ByteBufAllocator allocator, ScheduledExecutorService gcExecutor, long writeCacheSize,
-                    long readCacheSize) throws IOException {
-                super(conf, ledgerManager, ledgerDirsManager, indexDirsManager, stateManager, checkpointSource,
-                        checkpointer, statsLogger, allocator, gcExecutor, writeCacheSize, readCacheSize);
+                    LedgerDirsManager ledgerDirsManager, LedgerDirsManager indexDirsManager, EntryLogger entryLogger,
+                    StatsLogger statsLogger,
+                    ByteBufAllocator allocator, long writeCacheSize,
+                    long readCacheSize, int readAheadCacheBatchSize, long readAheadCacheBatchBytesSize)
+                    throws IOException {
+                super(conf, ledgerManager, ledgerDirsManager, indexDirsManager, entryLogger,
+                      statsLogger, allocator, writeCacheSize, readCacheSize, readAheadCacheBatchSize,
+                      readAheadCacheBatchBytesSize);
             }
 
           @Override
@@ -116,7 +116,7 @@ public class DbLedgerStorageWriteCacheTest {
         conf.setProperty(DbLedgerStorage.WRITE_CACHE_MAX_SIZE_MB, 1);
         conf.setProperty(DbLedgerStorage.MAX_THROTTLE_TIME_MILLIS, 1000);
         conf.setLedgerDirNames(new String[] { tmpDir.toString() });
-        Bookie bookie = new BookieImpl(conf);
+        Bookie bookie = new TestBookieImpl(conf);
 
         storage = (DbLedgerStorage) bookie.getLedgerStorage();
     }

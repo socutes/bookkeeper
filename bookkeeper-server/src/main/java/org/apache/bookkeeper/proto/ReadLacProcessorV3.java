@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -21,21 +21,18 @@
 package org.apache.bookkeeper.proto;
 
 import com.google.protobuf.ByteString;
-
 import io.netty.buffer.ByteBuf;
-import io.netty.channel.Channel;
 import io.netty.util.ReferenceCountUtil;
-
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
-
 import org.apache.bookkeeper.bookie.Bookie;
+import org.apache.bookkeeper.bookie.BookieException;
+import org.apache.bookkeeper.common.util.MathUtils;
 import org.apache.bookkeeper.proto.BookkeeperProtocol.ReadLacRequest;
 import org.apache.bookkeeper.proto.BookkeeperProtocol.ReadLacResponse;
 import org.apache.bookkeeper.proto.BookkeeperProtocol.Request;
 import org.apache.bookkeeper.proto.BookkeeperProtocol.Response;
 import org.apache.bookkeeper.proto.BookkeeperProtocol.StatusCode;
-import org.apache.bookkeeper.util.MathUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,9 +42,9 @@ import org.slf4j.LoggerFactory;
 class ReadLacProcessorV3 extends PacketProcessorBaseV3 implements Runnable {
     private static final Logger logger = LoggerFactory.getLogger(ReadLacProcessorV3.class);
 
-    public ReadLacProcessorV3(Request request, Channel channel,
+    public ReadLacProcessorV3(Request request, BookieRequestHandler requestHandler,
                              BookieRequestProcessor requestProcessor) {
-        super(request, channel, requestProcessor);
+        super(request, requestHandler, requestProcessor);
     }
 
     // Returns null if there is no exception thrown
@@ -74,10 +71,13 @@ class ReadLacProcessorV3 extends PacketProcessorBaseV3 implements Runnable {
             }
         } catch (Bookie.NoLedgerException e) {
             status = StatusCode.ENOLEDGER;
-            logger.warn("No ledger found while performing readLac from ledger: {}", ledgerId, e);
-        } catch (IOException e) {
+            logger.debug("No ledger found while performing readLac from ledger: {}", ledgerId, e);
+        } catch (BookieException.DataUnknownException e) {
+            status = StatusCode.EUNKNOWNLEDGERSTATE;
+            logger.error("Ledger {} in unknown state and cannot serve reacLac requests", ledgerId, e);
+        } catch (BookieException | IOException e) {
             status = StatusCode.EIO;
-            logger.error("IOException while performing readLac from ledger: {}", ledgerId);
+            logger.error("IOException while performing readLac from ledger: {}", ledgerId, e);
         } finally {
             ReferenceCountUtil.release(lac);
         }
@@ -89,11 +89,11 @@ class ReadLacProcessorV3 extends PacketProcessorBaseV3 implements Runnable {
             }
         } catch (Bookie.NoLedgerException e) {
             status = StatusCode.ENOLEDGER;
-            logger.warn("No ledger found while trying to read last entry: {}", ledgerId, e);
-        } catch (Bookie.NoEntryException e) {
-            status = StatusCode.ENOENTRY;
-            logger.warn("No Entry found while trying to read last entry: {}", ledgerId, e);
-        } catch (IOException e) {
+            logger.debug("No ledger found while trying to read last entry: {}", ledgerId, e);
+        } catch (BookieException.DataUnknownException e) {
+            status = StatusCode.EUNKNOWNLEDGERSTATE;
+            logger.error("Ledger in an unknown state while trying to read last entry: {}", ledgerId, e);
+        } catch (BookieException | IOException e) {
             status = StatusCode.EIO;
             logger.error("IOException while trying to read last entry: {}", ledgerId, e);
         } finally {
@@ -117,7 +117,7 @@ class ReadLacProcessorV3 extends PacketProcessorBaseV3 implements Runnable {
     }
 
     @Override
-    public void safeRun() {
+    public void run() {
         ReadLacResponse readLacResponse = getReadLacResponse();
         sendResponse(readLacResponse);
     }

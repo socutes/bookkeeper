@@ -27,9 +27,7 @@ import java.util.Collections;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-
 import lombok.Cleanup;
-
 import org.apache.bookkeeper.conf.ClientConfiguration;
 import org.apache.bookkeeper.net.BookieId;
 import org.apache.bookkeeper.test.BookKeeperClusterTestCase;
@@ -160,7 +158,7 @@ public class TestBookieWatcher extends BookKeeperClusterTestCase {
         ClientConfiguration conf = new ClientConfiguration();
         conf.setMetadataServiceUri(metadataServiceUri);
 
-        try (BookKeeper bkc = new BookKeeper(conf, zk)) {
+        try (BookKeeperTestClient bkc = new BookKeeperTestClient(conf, zk)) {
 
             LedgerHandle lh;
             try {

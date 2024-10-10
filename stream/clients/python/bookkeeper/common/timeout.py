@@ -140,7 +140,7 @@ class ExponentialTimeout(object):
 
     This is useful if a function is called multiple times. Each time the
     function is called this decorator will calculate a new timeout parameter
-    based on the the number of times the function has been called.
+    based on the number of times the function has been called.
 
     For example
 
@@ -154,9 +154,9 @@ class ExponentialTimeout(object):
         deadline (Optional[float]): The overall deadline across all
             invocations. This is used to prevent a very large calculated
             timeout from pushing the overall execution time over the deadline.
-            This is especially useful in conjuction with
+            This is especially useful in conjunction with
             :mod:`bookkeeper.common.retry`. If ``None``, the timeouts will not
-            be adjusted to accomodate an overall deadline.
+            be adjusted to accommodate an overall deadline.
     """
     def __init__(
             self,

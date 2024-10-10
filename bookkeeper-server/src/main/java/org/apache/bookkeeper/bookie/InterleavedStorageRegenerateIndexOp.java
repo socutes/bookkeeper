@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -21,7 +21,6 @@
 package org.apache.bookkeeper.bookie;
 
 import io.netty.buffer.ByteBuf;
-
 import java.io.IOException;
 import java.security.NoSuchAlgorithmException;
 import java.util.HashMap;
@@ -29,8 +28,7 @@ import java.util.Map;
 import java.util.PrimitiveIterator.OfLong;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
-
-import org.apache.bookkeeper.bookie.EntryLogger.EntryLogScanner;
+import org.apache.bookkeeper.bookie.storage.EntryLogScanner;
 import org.apache.bookkeeper.common.util.Watcher;
 import org.apache.bookkeeper.conf.ServerConfiguration;
 import org.apache.bookkeeper.proto.checksum.DigestManager;
@@ -89,12 +87,12 @@ public class InterleavedStorageRegenerateIndexOp {
     public void initiate(boolean dryRun) throws IOException {
         LOG.info("Starting index rebuilding");
 
-        DiskChecker diskChecker = BookieImpl.createDiskChecker(conf);
-        LedgerDirsManager ledgerDirsManager = BookieImpl.createLedgerDirsManager(
+        DiskChecker diskChecker = BookieResources.createDiskChecker(conf);
+        LedgerDirsManager ledgerDirsManager = BookieResources.createLedgerDirsManager(
                 conf, diskChecker, NullStatsLogger.INSTANCE);
-        LedgerDirsManager indexDirsManager = BookieImpl.createIndexDirsManager(
+        LedgerDirsManager indexDirsManager = BookieResources.createIndexDirsManager(
                 conf, diskChecker,  NullStatsLogger.INSTANCE, ledgerDirsManager);
-        EntryLogger entryLogger = new EntryLogger(conf, ledgerDirsManager);
+        DefaultEntryLogger entryLogger = new DefaultEntryLogger(conf, ledgerDirsManager);
         final LedgerCache ledgerCache;
         if (dryRun) {
             ledgerCache = new DryRunLedgerCache();

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -23,7 +23,6 @@ import java.util.NavigableSet;
 import java.util.TreeSet;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
-
 import org.apache.bookkeeper.conf.AbstractConfiguration;
 import org.apache.bookkeeper.proto.BookkeeperInternalCallbacks.Processor;
 import org.apache.bookkeeper.util.StringUtils;
@@ -68,7 +67,7 @@ public abstract class AbstractHierarchicalLedgerManager extends AbstractZkLedger
                     finalCb.processResult(successRc, null, context);
                     return;
                 } else if (rc != Code.OK.intValue()) {
-                    LOG.error("Error syncing path " + path + " when getting its chidren: ",
+                    LOG.error("Error syncing path " + path + " when getting its children: ",
                               KeeperException.create(KeeperException.Code.get(rc), path));
                     finalCb.processResult(failureRc, null, context);
                     return;
@@ -100,7 +99,7 @@ public abstract class AbstractHierarchicalLedgerManager extends AbstractZkLedger
     }
 
     /**
-     * Process list one by one in asynchronize way. Process will be stopped immediately
+     * Process list one by one in asynchronous way. Process will be stopped immediately
      * when error occurred.
      */
     private static class AsyncListProcessor<T> {
@@ -191,7 +190,7 @@ public abstract class AbstractHierarchicalLedgerManager extends AbstractZkLedger
         NavigableSet<Long> zkActiveLedgers = new TreeSet<Long>();
 
         if (!path.startsWith(ledgerRootPath)) {
-            LOG.warn("Ledger path [{}] is not a valid path name, it should start wth {}", path, ledgerRootPath);
+            LOG.warn("Ledger path [{}] is not a valid path name, it should start with {}", path, ledgerRootPath);
             return zkActiveLedgers;
         }
 

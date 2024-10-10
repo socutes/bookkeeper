@@ -30,7 +30,6 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-
 import org.apache.bookkeeper.client.AsyncCallback.CreateCallback;
 import org.apache.bookkeeper.client.BKException.BKNotEnoughBookiesException;
 import org.apache.bookkeeper.client.BookKeeper.DigestType;
@@ -42,11 +41,11 @@ import org.apache.bookkeeper.client.api.LedgerMetadata;
 import org.apache.bookkeeper.client.api.WriteAdvHandle;
 import org.apache.bookkeeper.client.api.WriteFlag;
 import org.apache.bookkeeper.client.api.WriteHandle;
+import org.apache.bookkeeper.common.util.MathUtils;
 import org.apache.bookkeeper.meta.LedgerIdGenerator;
 import org.apache.bookkeeper.net.BookieId;
 import org.apache.bookkeeper.proto.BookkeeperInternalCallbacks.GenericCallback;
 import org.apache.bookkeeper.stats.OpStatsLogger;
-import org.apache.bookkeeper.util.MathUtils;
 import org.apache.bookkeeper.versioning.Versioned;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -272,7 +271,11 @@ class LedgerCreateOp {
         } else {
             createOpLogger.registerSuccessfulEvent(MathUtils.elapsedNanos(startTime), TimeUnit.NANOSECONDS);
         }
-        cb.createComplete(rc, lh, ctx);
+        if (lh != null) { // lh is null in case of errors
+            lh.executeOrdered(() -> cb.createComplete(rc, lh, ctx));
+        } else {
+            cb.createComplete(rc, null, ctx);
+        }
     }
 
     public static class CreateBuilderImpl implements CreateBuilder {

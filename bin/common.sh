@@ -51,9 +51,7 @@ fi
 # Check for the java to use
 if [[ -z ${JAVA_HOME} ]]; then
   JAVA=$(which java)
-  if [ $? = 0 ]; then
-    echo "JAVA_HOME not set, using java from PATH. ($JAVA)"
-  else
+  if [ $? != 0 ]; then
     echo "Error: JAVA_HOME not set, and no java executable found in $PATH." 1>&2
     exit 1
   fi
@@ -64,26 +62,23 @@ fi
 BINDIR=${BK_BINDIR:-"`dirname "$0"`"}
 BK_HOME=${BK_HOME:-"`cd ${BINDIR}/..;pwd`"}
 BK_CONFDIR=${BK_HOME}/conf
-DEFAULT_LOG_CONF=${BK_CONFDIR}/log4j.properties
+DEFAULT_LOG_CONF=${BK_CONFDIR}/log4j2.xml
 
 source ${BK_CONFDIR}/nettyenv.sh
 source ${BK_CONFDIR}/bkenv.sh
 source ${BK_CONFDIR}/bk_cli_env.sh
 
 detect_jdk8() {
-
-  if [ -f "$JAVA_HOME/lib/modules" ]; then
+  local is_java_8=$($JAVA -version 2>&1 | grep version | grep '"1\.8')
+  if [ -z "$is_java_8" ]; then
      echo "0"
   else
      echo "1"
   fi
-  return
 }
 
 # default netty settings
 NETTY_LEAK_DETECTION_LEVEL=${NETTY_LEAK_DETECTION_LEVEL:-"disabled"}
-NETTY_RECYCLER_MAXCAPACITY=${NETTY_RECYCLER_MAXCAPACITY:-"1000"}
-NETTY_RECYCLER_LINKCAPACITY=${NETTY_RECYCLER_LINKCAPACITY:-"1024"}
 
 USING_JDK8=$(detect_jdk8)
 
@@ -98,7 +93,6 @@ else
     -XX:MaxGCPauseMillis=10 \
     -XX:+ParallelRefProcEnabled \
     -XX:+UnlockExperimentalVMOptions \
-    -XX:+AggressiveOpts \
     -XX:+DoEscapeAnalysis \
     -XX:ParallelGCThreads=32 \
     -XX:ConcGCThreads=32 \
@@ -199,13 +193,13 @@ find_module_jar() {
     BUILT_JAR=$(find_module_jar_at ${BK_HOME}/${MODULE_PATH}/target ${MODULE_NAME})
     if [ -z "${BUILT_JAR}" ]; then
       echo "Couldn't find module '${MODULE_NAME}' jar." >&2
-      read -p "Do you want me to run \`mvn package -DskipTests\` for you ? (y|n) " answer
+      read -p "Do you want me to run \`mvn install -DskipTests\` for you ? (y|n) " answer
       case "${answer:0:1}" in
         y|Y )
           mkdir -p ${BK_HOME}/logs
           output="${BK_HOME}/logs/build.out"
           echo "see output at ${output} for the progress ..." >&2
-          mvn package -DskipTests &> ${output}
+          mvn install -DskipTests &> ${output}
           ;;
         * )
           exit 1
@@ -239,6 +233,7 @@ add_maven_deps_to_classpath() {
   # clean it up and force us create a new one.
   f="${BK_HOME}/${MODULE_PATH}/target/cached_classpath.txt"
   output="${BK_HOME}/${MODULE_PATH}/target/build_classpath.out"
+
   if [ ! -f ${f} ]; then
     echo "the classpath of module '${MODULE_PATH}' is not found, generating it ..." >&2
     echo "see output at ${output} for the progress ..." >&2
@@ -285,37 +280,55 @@ build_cli_jvm_opts() {
 }
 
 build_netty_opts() {
-  echo "-Dio.netty.leakDetectionLevel=${NETTY_LEAK_DETECTION_LEVEL} \
-    -Dio.netty.recycler.maxCapacity.default=${NETTY_RECYCLER_MAXCAPACITY} \
-    -Dio.netty.recycler.linkCapacity=${NETTY_RECYCLER_LINKCAPACITY}"
+  NETTY_OPTS="-Dio.netty.leakDetectionLevel=${NETTY_LEAK_DETECTION_LEVEL} -Dio.netty.tryReflectionSetAccessible=true"
+  # --add-opens does not exist on jdk8
+  if [ "$USING_JDK8" -eq "0" ]; then
+    # Enable java.nio.DirectByteBuffer
+    # https://github.com/netty/netty/blob/4.1/common/src/main/java/io/netty/util/internal/PlatformDependent0.java
+    # https://github.com/netty/netty/issues/12265
+    NETTY_OPTS="$NETTY_OPTS --add-opens java.base/java.nio=ALL-UNNAMED --add-opens java.base/jdk.internal.misc=ALL-UNNAMED"
+  fi
+  echo $NETTY_OPTS
 }
 
 build_logging_opts() {
   CONF_FILE=$1
-  LOG_DIR=$2
-  LOG_FILE=$3
-  LOGGER=$4
+  LOG_LEVEL=$2
+  LOG_APPENDER=$3
+  LOG_DIR=$4
+  LOG_FILE=$5
 
-  echo "-Dlog4j.configuration=`basename ${CONF_FILE}` \
-    -Dbookkeeper.root.logger=${LOGGER} \
+  echo "-Dlog4j.configurationFile=`basename ${CONF_FILE}` \
+    -Dbookkeeper.log.root.level=${LOG_LEVEL} \
+    -Dbookkeeper.log.root.appender=${LOG_APPENDER} \
     -Dbookkeeper.log.dir=${LOG_DIR} \
     -Dbookkeeper.log.file=${LOG_FILE}"
 }
 
 build_cli_logging_opts() {
   CONF_FILE=$1
-  LOG_DIR=$2
-  LOG_FILE=$3
-  LOGGER=$4
+  LOG_LEVEL=$2
+  LOG_APPENDER=$3
+  LOG_DIR=$4
+  LOG_FILE=$5
 
-  echo "-Dlog4j.configuration=`basename ${CONF_FILE}` \
-    -Dbookkeeper.cli.root.logger=${LOGGER} \
+  echo "-Dlog4j.configurationFile=`basename ${CONF_FILE}` \
+    -Dbookkeeper.cli.log.root.level=${LOG_LEVEL} \
+    -Dbookkeeper.cli.log.root.appender=${LOG_APPENDER} \
     -Dbookkeeper.cli.log.dir=${LOG_DIR} \
     -Dbookkeeper.cli.log.file=${LOG_FILE}"
 }
 
 build_bookie_opts() {
-  echo "-Djava.net.preferIPv4Stack=true"
+  BOOKIE_OPTS="-Djava.net.preferIPv4Stack=true"
+  # --add-opens does not exist on jdk8
+  if [ "$USING_JDK8" -eq "0" ]; then
+    # enable posix_fadvise usage in the Journal
+    BOOKIE_OPTS="$BOOKIE_OPTS --add-opens java.base/java.io=ALL-UNNAMED"
+    # DirectMemoryCRC32Digest
+    BOOKIE_OPTS="$BOOKIE_OPTS --add-opens java.base/java.util.zip=ALL-UNNAMED"
+  fi
+  echo $BOOKIE_OPTS
 }
 
 find_table_service() {
@@ -333,7 +346,7 @@ find_table_service() {
       TABLE_SERVICE_RELEASED="false"
     fi
   fi
-  
+
   # check the configuration to see if table service is enabled or not.
   if [ -z "${ENABLE_TABLE_SERVICE}" ]; then
     # mask exit code if the configuration file doesn't contain `StreamStorageLifecycleComponent`
@@ -346,7 +359,7 @@ find_table_service() {
       ENABLE_TABLE_SERVICE="true"
     fi
   fi
-  
+
   # standalone only run
   if [ \( "x${SERVICE_COMMAND}" == "xstandalone" \) -a \( "x${TABLE_SERVICE_RELEASED}" == "xfalse" \) ]; then
     echo "The release binary is built without table service. Use \`localbookie <n>\` instead of \`standalone\` for local development."

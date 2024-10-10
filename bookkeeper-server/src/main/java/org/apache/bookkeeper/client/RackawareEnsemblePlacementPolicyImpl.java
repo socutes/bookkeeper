@@ -20,18 +20,17 @@ package org.apache.bookkeeper.client;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static org.apache.bookkeeper.bookie.BookKeeperServerStats.BOOKIES_JOINED;
 import static org.apache.bookkeeper.bookie.BookKeeperServerStats.BOOKIES_LEFT;
-import static org.apache.bookkeeper.bookie.BookKeeperServerStats.FAILED_TO_RESOLVE_NETWORK_LOCATION_COUNTER;
+import static org.apache.bookkeeper.bookie.BookKeeperServerStats.FAILED_TO_RESOLVE_NETWORK_LOCATION_COUNT;
 import static org.apache.bookkeeper.client.BookKeeperClientStats.CLIENT_SCOPE;
 import static org.apache.bookkeeper.client.BookKeeperClientStats.NUM_WRITABLE_BOOKIES_IN_DEFAULT_RACK;
 import static org.apache.bookkeeper.client.BookKeeperClientStats.READ_REQUESTS_REORDERED;
 import static org.apache.bookkeeper.client.RegionAwareEnsemblePlacementPolicy.UNKNOWN_REGION;
 
+import com.beust.jcommander.internal.Lists;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
-
 import io.netty.util.HashedWheelTimer;
-
 import java.io.IOException;
 import java.net.InetAddress;
 import java.util.ArrayList;
@@ -44,8 +43,9 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
-
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.apache.bookkeeper.client.BKException.BKNotEnoughBookiesException;
 import org.apache.bookkeeper.client.BookieInfoReader.BookieInfo;
 import org.apache.bookkeeper.client.WeightedRandomSelection.WeightedObject;
@@ -69,6 +69,7 @@ import org.apache.bookkeeper.stats.OpStatsLogger;
 import org.apache.bookkeeper.stats.StatsLogger;
 import org.apache.bookkeeper.stats.annotations.StatsDoc;
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.tuple.Pair;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -89,8 +90,8 @@ public class RackawareEnsemblePlacementPolicyImpl extends TopologyAwareEnsembleP
     protected int minNumRacksPerWriteQuorum;
     protected boolean enforceMinNumRacksPerWriteQuorum;
     protected boolean ignoreLocalNodeInPlacementPolicy;
+    protected boolean useHostnameResolveLocalNodePlacementPolicy;
 
-    public static final String REPP_DNS_RESOLVER_CLASS = "reppDnsResolverClass";
     public static final String REPP_RANDOM_READ_REORDERING = "ensembleRandomReadReordering";
 
     static final int RACKNAME_DISTANCE_FROM_LEAVES = 1;
@@ -123,7 +124,7 @@ public class RackawareEnsemblePlacementPolicyImpl extends TopologyAwareEnsembleP
     )
     protected OpStatsLogger readReorderedCounter = null;
     @StatsDoc(
-            name = FAILED_TO_RESOLVE_NETWORK_LOCATION_COUNTER,
+            name = FAILED_TO_RESOLVE_NETWORK_LOCATION_COUNT,
             help = "Counter for number of times DNSResolverDecorator failed to resolve Network Location"
     )
     protected Counter failedToResolveNetworkLocationCounter = null;
@@ -147,7 +148,18 @@ public class RackawareEnsemblePlacementPolicyImpl extends TopologyAwareEnsembleP
     /**
      * Initialize the policy.
      *
-     * @param dnsResolver the object used to resolve addresses to their network address
+     * @param dnsResolver
+     * @param timer
+     * @param reorderReadsRandom
+     * @param stabilizePeriodSeconds
+     * @param reorderThresholdPendingRequests
+     * @param isWeighted
+     * @param maxWeightMultiple
+     * @param minNumRacksPerWriteQuorum
+     * @param enforceMinNumRacksPerWriteQuorum
+     * @param ignoreLocalNodeInPlacementPolicy
+     * @param statsLogger
+     * @param bookieAddressResolver
      * @return initialized ensemble placement policy
      */
     protected RackawareEnsemblePlacementPolicyImpl initialize(DNSToSwitchMapping dnsResolver,
@@ -162,13 +174,38 @@ public class RackawareEnsemblePlacementPolicyImpl extends TopologyAwareEnsembleP
                                                               boolean ignoreLocalNodeInPlacementPolicy,
                                                               StatsLogger statsLogger,
                                                               BookieAddressResolver bookieAddressResolver) {
+        return initialize(dnsResolver, timer, reorderReadsRandom, stabilizePeriodSeconds,
+            reorderThresholdPendingRequests, isWeighted, maxWeightMultiple, minNumRacksPerWriteQuorum,
+            enforceMinNumRacksPerWriteQuorum, ignoreLocalNodeInPlacementPolicy,
+            false, statsLogger, bookieAddressResolver);
+    }
+
+    /**
+     * Initialize the policy.
+     *
+     * @param dnsResolver the object used to resolve addresses to their network address
+     * @return initialized ensemble placement policy
+     */
+    protected RackawareEnsemblePlacementPolicyImpl initialize(DNSToSwitchMapping dnsResolver,
+                                                              HashedWheelTimer timer,
+                                                              boolean reorderReadsRandom,
+                                                              int stabilizePeriodSeconds,
+                                                              int reorderThresholdPendingRequests,
+                                                              boolean isWeighted,
+                                                              int maxWeightMultiple,
+                                                              int minNumRacksPerWriteQuorum,
+                                                              boolean enforceMinNumRacksPerWriteQuorum,
+                                                              boolean ignoreLocalNodeInPlacementPolicy,
+                                                              boolean useHostnameResolveLocalNodePlacementPolicy,
+                                                              StatsLogger statsLogger,
+                                                              BookieAddressResolver bookieAddressResolver) {
         checkNotNull(statsLogger, "statsLogger should not be null, use NullStatsLogger instead.");
         this.statsLogger = statsLogger;
         this.bookieAddressResolver = bookieAddressResolver;
         this.bookiesJoinedCounter = statsLogger.getOpStatsLogger(BOOKIES_JOINED);
         this.bookiesLeftCounter = statsLogger.getOpStatsLogger(BOOKIES_LEFT);
         this.readReorderedCounter = statsLogger.getOpStatsLogger(READ_REQUESTS_REORDERED);
-        this.failedToResolveNetworkLocationCounter = statsLogger.getCounter(FAILED_TO_RESOLVE_NETWORK_LOCATION_COUNTER);
+        this.failedToResolveNetworkLocationCounter = statsLogger.getCounter(FAILED_TO_RESOLVE_NETWORK_LOCATION_COUNT);
         this.numWritableBookiesInDefaultRack = new Gauge<Integer>() {
             @Override
             public Integer getDefaultValue() {
@@ -195,6 +232,7 @@ public class RackawareEnsemblePlacementPolicyImpl extends TopologyAwareEnsembleP
         this.minNumRacksPerWriteQuorum = minNumRacksPerWriteQuorum;
         this.enforceMinNumRacksPerWriteQuorum = enforceMinNumRacksPerWriteQuorum;
         this.ignoreLocalNodeInPlacementPolicy = ignoreLocalNodeInPlacementPolicy;
+        this.useHostnameResolveLocalNodePlacementPolicy = useHostnameResolveLocalNodePlacementPolicy;
 
         // create the network topology
         if (stabilizePeriodSeconds > 0) {
@@ -206,7 +244,9 @@ public class RackawareEnsemblePlacementPolicyImpl extends TopologyAwareEnsembleP
         BookieNode bn = null;
         if (!ignoreLocalNodeInPlacementPolicy) {
             try {
-                bn = createDummyLocalBookieNode(InetAddress.getLocalHost().getHostAddress());
+                String hostname = useHostnameResolveLocalNodePlacementPolicy
+                    ? InetAddress.getLocalHost().getCanonicalHostName() : InetAddress.getLocalHost().getHostAddress();
+                bn = createDummyLocalBookieNode(hostname);
             } catch (IOException e) {
                 LOG.error("Failed to get local host address : ", e);
             }
@@ -241,6 +281,7 @@ public class RackawareEnsemblePlacementPolicyImpl extends TopologyAwareEnsembleP
         return this;
     }
 
+    @Override
     public String getDefaultRack() {
         return defaultRack;
     }
@@ -260,6 +301,7 @@ public class RackawareEnsemblePlacementPolicyImpl extends TopologyAwareEnsembleP
             String dnsResolverName = conf.getString(REPP_DNS_RESOLVER_CLASS, ScriptBasedMapping.class.getName());
             try {
                 dnsResolver = ReflectionUtils.newInstance(dnsResolverName, DNSToSwitchMapping.class);
+                dnsResolver.setBookieAddressResolver(bookieAddressResolver);
                 if (dnsResolver instanceof Configurable) {
                     ((Configurable) dnsResolver).setConf(conf);
                 }
@@ -269,9 +311,10 @@ public class RackawareEnsemblePlacementPolicyImpl extends TopologyAwareEnsembleP
                 }
             } catch (RuntimeException re) {
                 if (!conf.getEnforceMinNumRacksPerWriteQuorum()) {
-                    LOG.error("Failed to initialize DNS Resolver {}, used default subnet resolver : {} {}",
-                            dnsResolverName, re, re.getMessage());
+                    LOG.warn("Failed to initialize DNS Resolver {}, used default subnet resolver because {}",
+                            dnsResolverName, re.getMessage());
                     dnsResolver = new DefaultResolver(this::getDefaultRack);
+                    dnsResolver.setBookieAddressResolver(bookieAddressResolver);
                 } else {
                     /*
                      * if minNumRacksPerWriteQuorum is enforced, then it
@@ -281,9 +324,6 @@ public class RackawareEnsemblePlacementPolicyImpl extends TopologyAwareEnsembleP
                     throw re;
                 }
             }
-        }
-        if (dnsResolver != null) {
-            dnsResolver.setBookieAddressResolver(bookieAddressResolver);
         }
         slowBookies = CacheBuilder.newBuilder()
             .expireAfterWrite(conf.getBookieFailureHistoryExpirationMSec(), TimeUnit.MILLISECONDS)
@@ -304,6 +344,7 @@ public class RackawareEnsemblePlacementPolicyImpl extends TopologyAwareEnsembleP
                 conf.getMinNumRacksPerWriteQuorum(),
                 conf.getEnforceMinNumRacksPerWriteQuorum(),
                 conf.getIgnoreLocalNodeInPlacementPolicy(),
+                conf.getUseHostnameResolveLocalNodePlacementPolicy(),
                 statsLogger,
                 bookieAddressResolver);
     }
@@ -415,9 +456,9 @@ public class RackawareEnsemblePlacementPolicyImpl extends TopologyAwareEnsembleP
                 }
                 return PlacementResult.of(addrs, PlacementPolicyAdherence.FAIL);
             }
-
+            //Choose different rack nodes.
+            String curRack = null;
             for (int i = 0; i < ensembleSize; i++) {
-                String curRack;
                 if (null == prevNode) {
                     if ((null == localNode) || defaultRack.equals(localNode.getNetworkLocation())) {
                         curRack = NodeBase.ROOT;
@@ -425,11 +466,24 @@ public class RackawareEnsemblePlacementPolicyImpl extends TopologyAwareEnsembleP
                         curRack = localNode.getNetworkLocation();
                     }
                 } else {
-                    curRack = "~" + prevNode.getNetworkLocation();
+                    if (!curRack.startsWith("~")) {
+                        curRack = "~" + prevNode.getNetworkLocation();
+                    } else {
+                        curRack = curRack + NetworkTopologyImpl.NODE_SEPARATOR + prevNode.getNetworkLocation();
+                    }
                 }
                 boolean firstBookieInTheEnsemble = (null == prevNode);
-                prevNode = selectFromNetworkLocation(curRack, excludeNodes, ensemble, ensemble,
-                        !enforceMinNumRacksPerWriteQuorum || firstBookieInTheEnsemble);
+                try {
+                    prevNode = selectRandomFromRack(curRack, excludeNodes, ensemble, ensemble);
+                } catch (BKNotEnoughBookiesException e) {
+                    if (!curRack.equals(NodeBase.ROOT)) {
+                        curRack = NodeBase.ROOT;
+                        prevNode = selectFromNetworkLocation(curRack, excludeNodes, ensemble, ensemble,
+                                !enforceMinNumRacksPerWriteQuorum || firstBookieInTheEnsemble);
+                    } else {
+                        throw e;
+                    }
+                }
             }
             List<BookieId> bookieList = ensemble.toList();
             if (ensembleSize != bookieList.size()) {
@@ -454,13 +508,26 @@ public class RackawareEnsemblePlacementPolicyImpl extends TopologyAwareEnsembleP
         try {
             excludeBookies = addDefaultRackBookiesIfMinNumRacksIsEnforced(excludeBookies);
             excludeBookies.addAll(currentEnsemble);
+
+            Set<Node> ensembleNodes = new HashSet<>();
+            Set<Node> excludeNodes = new HashSet<>();
             BookieNode bn = knownBookies.get(bookieToReplace);
             if (null == bn) {
                 bn = createBookieNode(bookieToReplace);
             }
-
-            Set<Node> ensembleNodes = convertBookiesToNodes(currentEnsemble);
-            Set<Node> excludeNodes = convertBookiesToNodes(excludeBookies);
+            for (BookieId bookieId : currentEnsemble) {
+                if (bookieId.equals(bookieToReplace)) {
+                    continue;
+                }
+                ensembleNodes.add(convertBookieToNode(bookieId));
+            }
+            for (BookieId bookieId : excludeBookies) {
+                if (bookieId.equals(bookieToReplace)) {
+                    excludeNodes.add(bn);
+                    continue;
+                }
+                excludeNodes.add(convertBookieToNode(bookieId));
+            }
 
             excludeNodes.addAll(ensembleNodes);
             excludeNodes.add(bn);
@@ -520,9 +587,10 @@ public class RackawareEnsemblePlacementPolicyImpl extends TopologyAwareEnsembleP
                         networkLoc, excludeBookies);
                 throw e;
             }
-            LOG.warn("Failed to choose a bookie from {} : "
-                     + "excluded {}, fallback to choose bookie randomly from the cluster.",
-                     networkLoc, excludeBookies);
+            LOG.warn("Failed to choose a bookie from network location {}, "
+                    + "the bookies in the network location are {}, excluded bookies {}, "
+                    + "current ensemble {}, fallback to choose bookie randomly from the cluster.",
+                     networkLoc, topology.getLeaves(networkLoc), excludeBookies, ensemble.toList());
             // randomly choose one from whole cluster, ignore the provided predicate.
             return selectRandom(1, excludeBookies, predicate, ensemble).get(0);
         }
@@ -545,6 +613,10 @@ public class RackawareEnsemblePlacementPolicyImpl extends TopologyAwareEnsembleP
              * the whole cluster and exclude the racks specified at
              * <tt>excludeRacks</tt>.
              */
+            LOG.warn("Failed to choose a bookie node from network location {}, "
+                    + "the bookies in the network location are {}, excluded bookies {}, "
+                    + "current ensemble {}, fallback to choose bookie randomly from the cluster.",
+                networkLoc, topology.getLeaves(networkLoc), excludeBookies, ensemble.toList());
             return selectFromNetworkLocation(excludeRacks, excludeBookies, predicate, ensemble, fallbackToRandom);
         }
     }
@@ -716,20 +788,18 @@ public class RackawareEnsemblePlacementPolicyImpl extends TopologyAwareEnsembleP
                 throw new BKNotEnoughBookiesException();
             }
             if (wRSelection == null) {
-                Map<BookieNode, WeightedObject> rackMap = new HashMap<BookieNode, WeightedObject>();
-                for (BookieNode n : bookiesToSelectFrom) {
-                    if (excludeBookies.contains(n)) {
-                        continue;
-                    }
-                    if (this.bookieInfoMap.containsKey(n)) {
-                        rackMap.put(n, this.bookieInfoMap.get(n));
-                    } else {
-                        rackMap.put(n, new BookieInfo());
-                    }
-                }
                 wRSelection = new WeightedRandomSelectionImpl<BookieNode>(this.maxWeightMultiple);
-                wRSelection.updateMap(rackMap);
             }
+
+            Map<BookieNode, WeightedObject> rackMap = new HashMap<BookieNode, WeightedObject>();
+            for (BookieNode n : bookiesToSelectFrom) {
+                if (this.bookieInfoMap.containsKey(n)) {
+                    rackMap.put(n, this.bookieInfoMap.get(n));
+                } else {
+                    rackMap.put(n, new BookieInfo());
+                }
+            }
+            wRSelection.updateMap(rackMap);
         } else {
             Collections.shuffle(bookiesToSelectFrom);
         }
@@ -1018,6 +1088,9 @@ public class RackawareEnsemblePlacementPolicyImpl extends TopologyAwareEnsembleP
     @Override
     public PlacementPolicyAdherence isEnsembleAdheringToPlacementPolicy(List<BookieId> ensembleList,
             int writeQuorumSize, int ackQuorumSize) {
+        if (CollectionUtils.isEmpty(ensembleList)) {
+            return PlacementPolicyAdherence.FAIL;
+        }
         int ensembleSize = ensembleList.size();
         int minNumRacksPerWriteQuorumForThisEnsemble = Math.min(writeQuorumSize, minNumRacksPerWriteQuorum);
         HashSet<String> racksInQuorum = new HashSet<String>();
@@ -1027,7 +1100,11 @@ public class RackawareEnsemblePlacementPolicyImpl extends TopologyAwareEnsembleP
             for (int j = 0; j < writeQuorumSize; j++) {
                 bookie = ensembleList.get((i + j) % ensembleSize);
                 try {
-                    racksInQuorum.add(knownBookies.get(bookie).getNetworkLocation());
+                    if (knownBookies.containsKey(bookie)) {
+                        racksInQuorum.add(knownBookies.get(bookie).getNetworkLocation());
+                    } else if (LOG.isDebugEnabled()) {
+                        LOG.debug("bookie {} is not in the list of knownBookies", bookie);
+                    }
                 } catch (Exception e) {
                     /*
                      * any issue/exception in analyzing whether ensemble is
@@ -1056,7 +1133,11 @@ public class RackawareEnsemblePlacementPolicyImpl extends TopologyAwareEnsembleP
         readLock.lock();
         try {
             for (BookieId bookie : ackedBookies) {
-                rackCounter.add(knownBookies.get(bookie).getNetworkLocation());
+                if (knownBookies.containsKey(bookie)) {
+                    rackCounter.add(knownBookies.get(bookie).getNetworkLocation());
+                } else if (LOG.isDebugEnabled()) {
+                    LOG.debug("bookie {} is not in the list of knownBookies", bookie);
+                }
             }
 
             // Check to make sure that ensemble is writing to `minNumberOfRacks`'s number of racks at least.
@@ -1071,5 +1152,222 @@ public class RackawareEnsemblePlacementPolicyImpl extends TopologyAwareEnsembleP
             readLock.unlock();
         }
         return rackCounter.size() >= minWriteQuorumNumRacksPerWriteQuorum;
+    }
+
+    @Override
+    public PlacementResult<List<BookieId>> replaceToAdherePlacementPolicy(
+            int ensembleSize,
+            int writeQuorumSize,
+            int ackQuorumSize,
+            Set<BookieId> excludeBookies,
+            List<BookieId> currentEnsemble) {
+        rwLock.readLock().lock();
+        try {
+            PlacementPolicyAdherence currentPlacementAdherence = isEnsembleAdheringToPlacementPolicy(
+                    currentEnsemble, writeQuorumSize, ackQuorumSize);
+            if (PlacementPolicyAdherence.FAIL != currentPlacementAdherence) {
+                return PlacementResult.of(new ArrayList<>(currentEnsemble), currentPlacementAdherence);
+            }
+            for (BookieId bookieId : currentEnsemble) {
+                if (!knownBookies.containsKey(bookieId)) {
+                    excludeBookies.add(bookieId);
+                }
+            }
+            int minNumRacksPerWriteQuorumForThisEnsemble = Math.min(writeQuorumSize, minNumRacksPerWriteQuorum);
+            int numRacks = topology.getNumOfRacks();
+            // only one rack or less than minNumRacksPerWriteQuorumForThisEnsemble, stop calculation to skip relocation
+            if (numRacks < 2 || numRacks < minNumRacksPerWriteQuorumForThisEnsemble) {
+                LOG.warn("Skip ensemble relocation because the cluster has only {} rack.", numRacks);
+                return PlacementResult.of(Collections.emptyList(), PlacementPolicyAdherence.FAIL);
+            }
+            PlacementResult<List<BookieId>> placementResult = PlacementResult.of(Collections.emptyList(),
+                    PlacementPolicyAdherence.FAIL);
+            int minDiffer = Integer.MAX_VALUE;
+            for (int i = 0; i < currentEnsemble.size(); i++) {
+                PlacementResult<List<BookieId>> result = doReplaceToAdherePlacementPolicy(ensembleSize,
+                        writeQuorumSize, ackQuorumSize, excludeBookies, currentEnsemble, i);
+                if (PlacementPolicyAdherence.FAIL == result.getAdheringToPolicy()) {
+                    continue;
+                }
+                int differ = differBetweenBookies(currentEnsemble, result.getResult());
+                if (differ < minDiffer) {
+                    minDiffer = differ;
+                    placementResult = result;
+                    if (minDiffer == 1) {
+                        break;
+                    }
+                }
+            }
+            return placementResult;
+        } finally {
+            rwLock.readLock().unlock();
+        }
+    }
+
+    private PlacementResult<List<BookieId>> doReplaceToAdherePlacementPolicy(
+            int ensembleSize,
+            int writeQuorumSize,
+            int ackQuorumSize,
+            Set<BookieId> excludeBookies,
+            List<BookieId> currentEnsemble,
+            int startIndex) {
+        final List<BookieNode> provisionalEnsembleNodes = currentEnsemble.stream()
+                .map(this::convertBookieToNode).collect(Collectors.toList());
+        final Set<Node> excludeNodes = convertBookiesToNodes(
+                addDefaultRackBookiesIfMinNumRacksIsEnforced(excludeBookies));
+        int minNumRacksPerWriteQuorumForThisEnsemble = Math.min(writeQuorumSize, minNumRacksPerWriteQuorum);
+        final RRTopologyAwareCoverageEnsemble ensemble =
+                new RRTopologyAwareCoverageEnsemble(
+                        ensembleSize,
+                        writeQuorumSize,
+                        ackQuorumSize,
+                        RACKNAME_DISTANCE_FROM_LEAVES,
+                        null,
+                        null,
+                        minNumRacksPerWriteQuorumForThisEnsemble);
+        BookieNode prevNode = null;
+        final BookieNode firstNode = provisionalEnsembleNodes.get(startIndex);
+        // use same bookie at first to reduce ledger replication
+        if (!excludeNodes.contains(firstNode) && ensemble.apply(firstNode, ensemble)
+                && ensemble.addNode(firstNode)) {
+            excludeNodes.add(firstNode);
+            prevNode = firstNode;
+        }
+        for (int i = prevNode == null ? 0 : 1; i < ensembleSize; i++) {
+            int index = (startIndex + i) % ensembleSize;
+            final String curRack;
+            if (null == prevNode) {
+                if ((null == localNode) || defaultRack.equals(localNode.getNetworkLocation())) {
+                    curRack = NodeBase.ROOT;
+                } else {
+                    curRack = localNode.getNetworkLocation();
+                }
+            } else {
+                curRack = NetworkTopologyImpl.INVERSE + prevNode.getNetworkLocation();
+            }
+            try {
+                prevNode = replaceToAdherePlacementPolicyInternal(
+                        curRack, excludeNodes, ensemble, ensemble,
+                        provisionalEnsembleNodes, index, ensembleSize, minNumRacksPerWriteQuorumForThisEnsemble);
+                // got a good candidate
+                if (ensemble.addNode(prevNode)) {
+                    // add the candidate to exclude set
+                    excludeNodes.add(prevNode);
+                } else {
+                    throw new BKNotEnoughBookiesException();
+                }
+                // replace to newer node
+                provisionalEnsembleNodes.set(index, prevNode);
+            } catch (BKNotEnoughBookiesException e) {
+                LOG.warn("Skip ensemble relocation because the cluster has not enough bookies.");
+                return PlacementResult.of(Collections.emptyList(), PlacementPolicyAdherence.FAIL);
+            }
+        }
+        List<BookieId> bookieList = ensemble.toList();
+        if (ensembleSize != bookieList.size()) {
+            LOG.warn("Not enough {} bookies are available to form an ensemble : {}.",
+                    ensembleSize, bookieList);
+            return PlacementResult.of(Collections.emptyList(), PlacementPolicyAdherence.FAIL);
+        }
+        PlacementPolicyAdherence placementPolicyAdherence = isEnsembleAdheringToPlacementPolicy(bookieList,
+                writeQuorumSize, ackQuorumSize);
+        if (PlacementPolicyAdherence.FAIL == placementPolicyAdherence) {
+            return PlacementResult.of(Collections.emptyList(), PlacementPolicyAdherence.FAIL);
+        }
+        return PlacementResult.of(revertBookieListByIndex(bookieList, startIndex), placementPolicyAdherence);
+    }
+
+    private List<BookieId> revertBookieListByIndex(List<BookieId> bookies, int startIndex) {
+        BookieId[] bookieIds = new BookieId[bookies.size()];
+        for (int i = 0; i < bookies.size(); i++) {
+            if (startIndex == bookies.size()) {
+                startIndex = 0;
+            }
+            bookieIds[startIndex++] = bookies.get(i);
+        }
+        return Lists.newArrayList(bookieIds);
+    }
+
+    private BookieNode replaceToAdherePlacementPolicyInternal(
+            String netPath, Set<Node> excludeBookies, Predicate<BookieNode> predicate,
+            Ensemble<BookieNode> ensemble, List<BookieNode> provisionalEnsembleNodes, int ensembleIndex,
+            int ensembleSize, int minNumRacksPerWriteQuorumForThisEnsemble) throws BKNotEnoughBookiesException {
+        final BookieNode currentNode = provisionalEnsembleNodes.get(ensembleIndex);
+        // if the current bookie could be applied to the ensemble, apply it to minify the number of bookies replaced
+        if (!excludeBookies.contains(currentNode) && predicate.apply(currentNode, ensemble)) {
+            return currentNode;
+        }
+        final List<Pair<String, List<BookieNode>>> conditionList = new ArrayList<>();
+        final Set<String> preExcludeRacks = new HashSet<>();
+        final Set<String> postExcludeRacks = new HashSet<>();
+        for (int i = 0; i < minNumRacksPerWriteQuorumForThisEnsemble - 1; i++) {
+            preExcludeRacks.add(provisionalEnsembleNodes.get(Math.floorMod((ensembleIndex - i - 1), ensembleSize))
+                    .getNetworkLocation());
+            postExcludeRacks.add(provisionalEnsembleNodes.get(Math.floorMod((ensembleIndex + i + 1), ensembleSize))
+                    .getNetworkLocation());
+        }
+        // adhere minNumRacksPerWriteQuorum by preExcludeRacks
+        // avoid additional replace from write quorum candidates by preExcludeRacks and postExcludeRacks
+        // avoid to use first candidate bookies for election by provisionalEnsembleNodes
+        conditionList.add(Pair.of(
+                NetworkTopologyImpl.INVERSE + String.join(",",
+                        Stream.concat(preExcludeRacks.stream(), postExcludeRacks.stream()).collect(Collectors.toSet())),
+                provisionalEnsembleNodes
+        ));
+        // avoid to use same rack between previous index by netPath
+        // avoid to use first candidate bookies for election by provisionalEnsembleNodes
+        conditionList.add(Pair.of(netPath, provisionalEnsembleNodes));
+        // avoid to use same rack between previous index by netPath
+        conditionList.add(Pair.of(netPath, Collections.emptyList()));
+
+        for (Pair<String, List<BookieNode>> condition : conditionList) {
+            WeightedRandomSelection<BookieNode> wRSelection = null;
+
+            final List<Node> leaves = new ArrayList<>(topology.getLeaves(condition.getLeft()));
+            if (!isWeighted) {
+                Collections.shuffle(leaves);
+            } else {
+                if (CollectionUtils.subtract(leaves, excludeBookies).size() < 1) {
+                    throw new BKNotEnoughBookiesException();
+                }
+                wRSelection = prepareForWeightedSelection(leaves);
+                if (wRSelection == null) {
+                    throw new BKNotEnoughBookiesException();
+                }
+            }
+
+            final Iterator<Node> it = leaves.iterator();
+            final Set<Node> bookiesSeenSoFar = new HashSet<>();
+            while (true) {
+                Node n;
+                if (isWeighted) {
+                    if (bookiesSeenSoFar.size() == leaves.size()) {
+                        // Don't loop infinitely.
+                        break;
+                    }
+                    n = wRSelection.getNextRandom();
+                    bookiesSeenSoFar.add(n);
+                } else {
+                    if (it.hasNext()) {
+                        n = it.next();
+                    } else {
+                        break;
+                    }
+                }
+                if (excludeBookies.contains(n)) {
+                    continue;
+                }
+                if (!(n instanceof BookieNode) || !predicate.apply((BookieNode) n, ensemble)) {
+                    continue;
+                }
+                // additional excludeBookies
+                if (condition.getRight().contains(n)) {
+                    continue;
+                }
+                BookieNode bn = (BookieNode) n;
+                return bn;
+            }
+        }
+        throw new BKNotEnoughBookiesException();
     }
 }

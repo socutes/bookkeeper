@@ -108,7 +108,9 @@ public class ZooKeeperClusterUtil implements ZooKeeperCluster {
         quorumUtil.startAll();
         connectString = quorumUtil.getConnString();
         // create a zookeeper client
-        LOG.debug("Instantiate ZK Client");
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("Instantiate ZK Client");
+        }
         zkc = ZooKeeperClient.newBuilder().connectString(getZooKeeperConnectString()).sessionTimeoutMs(10000).build();
 
         // create default bk ensemble
@@ -136,5 +138,13 @@ public class ZooKeeperClusterUtil implements ZooKeeperCluster {
     @Override
     public void sleepCluster(int time, TimeUnit timeUnit, CountDownLatch l) throws InterruptedException, IOException {
         throw new UnsupportedOperationException("sleepServer operation is not supported for ZooKeeperClusterUtil");
+    }
+
+    public void stopPeer(int id) throws Exception {
+        quorumUtil.shutdown(id);
+    }
+
+    public void enableLocalSession(boolean localSessionEnabled) {
+        quorumUtil.enableLocalSession(localSessionEnabled);
     }
 }

@@ -21,18 +21,16 @@
 package org.apache.bookkeeper.proto;
 
 import com.google.protobuf.ByteString;
-import io.netty.channel.Channel;
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
-
 import org.apache.bookkeeper.bookie.Bookie;
+import org.apache.bookkeeper.common.util.MathUtils;
 import org.apache.bookkeeper.proto.BookkeeperProtocol.GetListOfEntriesOfLedgerRequest;
 import org.apache.bookkeeper.proto.BookkeeperProtocol.GetListOfEntriesOfLedgerResponse;
 import org.apache.bookkeeper.proto.BookkeeperProtocol.Request;
 import org.apache.bookkeeper.proto.BookkeeperProtocol.Response;
 import org.apache.bookkeeper.proto.BookkeeperProtocol.StatusCode;
 import org.apache.bookkeeper.util.AvailabilityOfEntriesOfLedger;
-import org.apache.bookkeeper.util.MathUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,9 +43,9 @@ public class GetListOfEntriesOfLedgerProcessorV3 extends PacketProcessorBaseV3 i
     protected final GetListOfEntriesOfLedgerRequest getListOfEntriesOfLedgerRequest;
     protected final long ledgerId;
 
-    public GetListOfEntriesOfLedgerProcessorV3(Request request, Channel channel,
+    public GetListOfEntriesOfLedgerProcessorV3(Request request, BookieRequestHandler requestHandler,
             BookieRequestProcessor requestProcessor) {
-        super(request, channel, requestProcessor);
+        super(request, requestHandler, requestProcessor);
         this.getListOfEntriesOfLedgerRequest = request.getGetListOfEntriesOfLedgerRequest();
         this.ledgerId = getListOfEntriesOfLedgerRequest.getLedgerId();
     }
@@ -98,7 +96,7 @@ public class GetListOfEntriesOfLedgerProcessorV3 extends PacketProcessorBaseV3 i
     }
 
     @Override
-    public void safeRun() {
+    public void run() {
         GetListOfEntriesOfLedgerResponse listOfEntriesOfLedgerResponse = getListOfEntriesOfLedgerResponse();
         Response.Builder response = Response.newBuilder().setHeader(getHeader())
                 .setStatus(listOfEntriesOfLedgerResponse.getStatus())

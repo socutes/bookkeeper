@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -53,7 +53,7 @@ public abstract class NamespaceWatcher {
 
     /**
      * Watch the namespace changes. It would be triggered each time
-     * a namspace listener is added. The implementation should handle
+     * a namespace listener is added. The implementation should handle
      * this.
      */
     protected abstract void watchNamespaceChanges();

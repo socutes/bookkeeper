@@ -22,10 +22,12 @@ import static org.apache.bookkeeper.common.concurrent.FutureUtils.result;
 import static org.apache.bookkeeper.tools.cli.helpers.CommandHelpers.getBookieSocketAddrStringRepresentation;
 
 import com.beust.jcommander.Parameter;
+import com.google.common.annotations.VisibleForTesting;
 import java.util.Collection;
 import java.util.Set;
 import lombok.Setter;
 import lombok.experimental.Accessors;
+import org.apache.bookkeeper.client.BookieAddressResolverDisabled;
 import org.apache.bookkeeper.client.DefaultBookieAddressResolver;
 import org.apache.bookkeeper.discover.RegistrationClient;
 import org.apache.bookkeeper.net.BookieId;
@@ -47,7 +49,7 @@ public class ListBookiesCommand extends DiscoveryCommand<Flags> {
     private static final Logger LOG = LoggerFactory.getLogger(ListBookiesCommand.class);
 
     public ListBookiesCommand() {
-        this(new Flags());
+        this(Flags.newFlags());
     }
 
     public ListBookiesCommand(Flags flags) {
@@ -56,6 +58,11 @@ public class ListBookiesCommand extends DiscoveryCommand<Flags> {
             .withDescription(DESC)
             .withFlags(flags)
             .build());
+    }
+
+    @VisibleForTesting
+    public static ListBookiesCommand newListBookiesCommand(Flags flags) {
+        return new ListBookiesCommand(flags);
     }
 
     /**
@@ -72,16 +79,26 @@ public class ListBookiesCommand extends DiscoveryCommand<Flags> {
         @Parameter(names = { "-a", "--all" }, description = "Print all bookies")
         private boolean all = false;
 
+        @VisibleForTesting
+        public static Flags newFlags(){
+            return new Flags();
+        }
+
     }
 
     @Override
-    protected void run(RegistrationClient regClient, Flags flags) throws Exception {
+    protected void run(RegistrationClient regClient, Flags flags, boolean bookieAddressResolverEnabled)
+            throws Exception {
         if (!flags.readwrite && !flags.readonly && !flags.all) {
             // case: no args is provided. list all the bookies by default.
             flags.readwrite = true;
             flags.readonly = true;
             flags.all = true;
         }
+
+        BookieAddressResolver bookieAddressResolver = bookieAddressResolverEnabled
+                ? new DefaultBookieAddressResolver(regClient)
+                : new BookieAddressResolverDisabled();
 
         boolean hasBookies = false;
         if (flags.readwrite) {
@@ -90,7 +107,7 @@ public class ListBookiesCommand extends DiscoveryCommand<Flags> {
             ).getValue();
             if (!bookies.isEmpty()) {
                 LOG.info("ReadWrite Bookies :");
-                printBookies(bookies, new DefaultBookieAddressResolver(regClient));
+                printBookies(bookies, bookieAddressResolver);
                 hasBookies = true;
             }
         }
@@ -100,7 +117,7 @@ public class ListBookiesCommand extends DiscoveryCommand<Flags> {
             ).getValue();
             if (!bookies.isEmpty()) {
                 LOG.info("Readonly Bookies :");
-                printBookies(bookies, new DefaultBookieAddressResolver(regClient));
+                printBookies(bookies, bookieAddressResolver);
                 hasBookies = true;
             }
         }
@@ -110,7 +127,7 @@ public class ListBookiesCommand extends DiscoveryCommand<Flags> {
             ).getValue();
             if (!bookies.isEmpty()) {
                 LOG.info("All Bookies :");
-                printBookies(bookies, new DefaultBookieAddressResolver(regClient));
+                printBookies(bookies, bookieAddressResolver);
                 hasBookies = true;
             }
         }
@@ -121,7 +138,7 @@ public class ListBookiesCommand extends DiscoveryCommand<Flags> {
 
     private static void printBookies(Collection<BookieId> bookies, BookieAddressResolver bookieAddressResolver) {
         for (BookieId b : bookies) {
-            LOG.info(getBookieSocketAddrStringRepresentation(b, bookieAddressResolver));
+            LOG.info("{}", getBookieSocketAddrStringRepresentation(b, bookieAddressResolver));
         }
     }
 

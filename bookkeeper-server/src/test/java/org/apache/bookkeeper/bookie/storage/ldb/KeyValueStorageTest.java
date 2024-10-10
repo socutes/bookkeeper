@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -24,7 +24,6 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 import com.google.common.collect.Lists;
-
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -32,7 +31,6 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map.Entry;
-
 import org.apache.bookkeeper.bookie.storage.ldb.KeyValueStorage.Batch;
 import org.apache.bookkeeper.bookie.storage.ldb.KeyValueStorage.CloseableIterator;
 import org.apache.bookkeeper.bookie.storage.ldb.KeyValueStorageFactory.DbConfigType;
@@ -77,7 +75,7 @@ public class KeyValueStorageTest {
         File tmpDir = Files.createTempDirectory("junitTemporaryFolder").toFile();
         Files.createDirectory(Paths.get(tmpDir.toString(), "subDir"));
 
-        KeyValueStorage db = storageFactory.newKeyValueStorage(tmpDir.toString(), "subDir", DbConfigType.Small,
+        KeyValueStorage db = storageFactory.newKeyValueStorage(tmpDir.toString(), "subDir", DbConfigType.Default,
                 configuration);
 
         assertEquals(null, db.getFloor(toArray(3)));
@@ -168,6 +166,43 @@ public class KeyValueStorageTest {
         assertEquals(null, db.get(toArray(13)));
         assertEquals(14L, fromArray(db.get(toArray(14))));
         batch.close();
+
+        db.close();
+        FileUtils.deleteDirectory(tmpDir);
+    }
+
+    @Test
+    public void testBatch() throws Exception {
+
+        configuration.setOperationMaxNumbersInSingleRocksDBWriteBatch(5);
+
+        File tmpDir = Files.createTempDirectory("junitTemporaryFolder").toFile();
+        Files.createDirectory(Paths.get(tmpDir.toString(), "subDir"));
+
+        KeyValueStorage db = storageFactory.newKeyValueStorage(tmpDir.toString(), "subDir", DbConfigType.Default,
+                configuration);
+
+        assertEquals(null, db.getFloor(toArray(3)));
+        assertEquals(0, db.count());
+
+        Batch batch = db.newBatch();
+        assertEquals(0, batch.batchCount());
+
+        batch.put(toArray(1), toArray(1));
+        batch.put(toArray(2), toArray(2));
+        assertEquals(2, batch.batchCount());
+
+        batch.put(toArray(3), toArray(3));
+        batch.put(toArray(4), toArray(4));
+        batch.put(toArray(5), toArray(5));
+        assertEquals(0, batch.batchCount());
+        batch.put(toArray(6), toArray(6));
+        assertEquals(1, batch.batchCount());
+
+        batch.flush();
+        assertEquals(1, batch.batchCount());
+        batch.close();
+        assertEquals(0, batch.batchCount());
 
         db.close();
         FileUtils.deleteDirectory(tmpDir);

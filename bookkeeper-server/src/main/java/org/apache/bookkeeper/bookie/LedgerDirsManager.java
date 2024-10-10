@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -20,6 +20,7 @@
  */
 package org.apache.bookkeeper.bookie;
 
+import static org.apache.bookkeeper.bookie.BookKeeperServerStats.LD_NUM_DIRS;
 import static org.apache.bookkeeper.bookie.BookKeeperServerStats.LD_WRITABLE_DIRS;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -58,12 +59,16 @@ public class LedgerDirsManager {
 
     private final DiskChecker diskChecker;
 
-    public LedgerDirsManager(ServerConfiguration conf, File[] dirs, DiskChecker diskChecker) {
+    public LedgerDirsManager(ServerConfiguration conf, File[] dirs, DiskChecker diskChecker) throws IOException {
         this(conf, dirs, diskChecker, NullStatsLogger.INSTANCE);
     }
 
-    public LedgerDirsManager(ServerConfiguration conf, File[] dirs, DiskChecker diskChecker, StatsLogger statsLogger) {
+    public LedgerDirsManager(ServerConfiguration conf, File[] dirs, DiskChecker diskChecker, StatsLogger statsLogger)
+            throws IOException {
         this.ledgerDirectories = Arrays.asList(BookieImpl.getCurrentDirectories(dirs));
+        for (File f : this.ledgerDirectories) {
+            BookieImpl.checkDirectoryStructure(f);
+        }
         this.writableLedgerDirectories = new ArrayList<File>(ledgerDirectories);
         this.filledDirs = new ArrayList<File>();
         this.listeners = new ArrayList<LedgerDirsListener>();
@@ -100,6 +105,20 @@ public class LedgerDirsManager {
                 return writableLedgerDirectories.size();
             }
         });
+
+        final int numDirs = dirs.length;
+        statsLogger.registerGauge(LD_NUM_DIRS, new Gauge<Number>() {
+
+            @Override
+            public Number getDefaultValue() {
+                return numDirs;
+            }
+
+            @Override
+            public Number getSample() {
+                return numDirs;
+            }
+        });
     }
 
     /**
@@ -121,7 +140,7 @@ public class LedgerDirsManager {
     /**
      * Calculate the total amount of free space available in all of the ledger directories put together.
      *
-     * @return totalDiskSpace in bytes
+     * @return freeDiskSpace in bytes
      * @throws IOException
      */
     public long getTotalFreeSpace(List<File> dirs) throws IOException {
@@ -129,9 +148,9 @@ public class LedgerDirsManager {
     }
 
     /**
-     * Calculate the total amount of free space available in all of the ledger directories put together.
+     * Calculate the total amount of disk space in all of the ledger directories put together.
      *
-     * @return freeDiskSpace in bytes
+     * @return totalDiskSpace in bytes
      * @throws IOException
      */
     public long getTotalDiskSpace(List<File> dirs) throws IOException {
@@ -181,20 +200,20 @@ public class LedgerDirsManager {
 
     List<File> getDirsAboveUsableThresholdSize(long thresholdSize, boolean loggingNoWritable)
             throws NoWritableLedgerDirException {
-        List<File> fullLedgerDirsToAccomodate = new ArrayList<File>();
+        List<File> fullLedgerDirsToAccommodate = new ArrayList<File>();
         for (File dir: this.ledgerDirectories) {
             // Pick dirs which can accommodate little more than thresholdSize
             if (dir.getUsableSpace() > thresholdSize) {
-                fullLedgerDirsToAccomodate.add(dir);
+                fullLedgerDirsToAccommodate.add(dir);
             }
         }
 
-        if (!fullLedgerDirsToAccomodate.isEmpty()) {
+        if (!fullLedgerDirsToAccommodate.isEmpty()) {
             if (loggingNoWritable) {
                 LOG.info("No writable ledger dirs below diskUsageThreshold. "
-                    + "But Dirs that can accommodate {} are: {}", thresholdSize, fullLedgerDirsToAccomodate);
+                    + "But Dirs that can accommodate {} are: {}", thresholdSize, fullLedgerDirsToAccommodate);
             }
-            return fullLedgerDirsToAccomodate;
+            return fullLedgerDirsToAccommodate;
         }
 
         // We will reach here when we find no ledgerDir which has atleast
@@ -415,6 +434,19 @@ public class LedgerDirsManager {
          */
         default void allDisksFull(boolean highPriorityWritesAllowed) {}
 
+        /**
+         * This will be notified whenever all disks are detected as not full.
+         *
+         */
+        default void allDisksWritable() {}
+
+        /**
+         * This will be notified whenever any disks are detected as full.
+         *
+         * @param highPriorityWritesAllowed the parameter indicates we are still have disk spaces for high priority
+         *          *                                  writes even disks are detected as "full"
+         */
+        default void anyDiskFull(boolean highPriorityWritesAllowed) {}
         /**
          * This will notify the fatal errors.
          */

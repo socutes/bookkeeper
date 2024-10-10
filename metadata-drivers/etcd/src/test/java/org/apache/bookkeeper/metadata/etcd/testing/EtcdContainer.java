@@ -54,12 +54,12 @@ public class EtcdContainer extends GenericContainer<EtcdContainer> {
     private final String clusterName;
 
     public EtcdContainer(String clusterName) {
-        super("quay.io/coreos/etcd:v3.3");
+        super("quay.io/coreos/etcd:v3.5.14");
         this.clusterName = clusterName;
     }
 
     public String getExternalServiceUri() {
-        return "etcd://" + getContainerIpAddress() + ":" + getEtcdClientPort() + "/clusters/" + clusterName;
+        return "etcd://" + getHost() + ":" + getEtcdClientPort() + "/clusters/" + clusterName;
     }
 
     public String getInternalServiceUri() {
@@ -113,7 +113,7 @@ public class EtcdContainer extends GenericContainer<EtcdContainer> {
     }
 
     public String getClientEndpoint() {
-        return String.format("http://%s:%d", getContainerIpAddress(), getEtcdClientPort());
+        return String.format("http://%s:%d", getHost(), getEtcdClientPort());
     }
 
     private WaitStrategy waitStrategy() {

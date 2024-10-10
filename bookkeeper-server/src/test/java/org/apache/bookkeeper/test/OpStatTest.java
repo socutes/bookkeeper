@@ -22,7 +22,6 @@
 package org.apache.bookkeeper.test;
 
 import static org.apache.bookkeeper.bookie.BookKeeperServerStats.BOOKIE_SCOPE;
-import static org.apache.bookkeeper.bookie.BookKeeperServerStats.JOURNAL_CB_QUEUE_SIZE;
 import static org.apache.bookkeeper.bookie.BookKeeperServerStats.JOURNAL_FORCE_WRITE_QUEUE_SIZE;
 import static org.apache.bookkeeper.bookie.BookKeeperServerStats.JOURNAL_QUEUE_SIZE;
 import static org.apache.bookkeeper.bookie.BookKeeperServerStats.JOURNAL_SCOPE;
@@ -32,7 +31,7 @@ import static org.junit.Assert.assertTrue;
 import java.util.function.BiConsumer;
 import org.apache.bookkeeper.client.BookKeeper;
 import org.apache.bookkeeper.client.LedgerHandle;
-import org.apache.bookkeeper.util.MathUtils;
+import org.apache.bookkeeper.common.util.MathUtils;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -114,9 +113,8 @@ public class OpStatTest extends BookKeeperClusterTestCase {
             assertTrue(average <= elapsed);
         });
         validateNonMonotonicCounterGauges(stats, new String[]{
-                BOOKIE_SCOPE + "." + JOURNAL_SCOPE + "." + JOURNAL_CB_QUEUE_SIZE,
-                BOOKIE_SCOPE + "." + JOURNAL_SCOPE + "." + JOURNAL_FORCE_WRITE_QUEUE_SIZE,
-                BOOKIE_SCOPE + "." + JOURNAL_SCOPE + "." + JOURNAL_QUEUE_SIZE
+                BOOKIE_SCOPE + "." + JOURNAL_SCOPE + ".journalIndex_0." + JOURNAL_FORCE_WRITE_QUEUE_SIZE,
+                BOOKIE_SCOPE + "." + JOURNAL_SCOPE + ".journalIndex_0." + JOURNAL_QUEUE_SIZE
         }, (value, max) -> {
             assertTrue(max > 0);
         });

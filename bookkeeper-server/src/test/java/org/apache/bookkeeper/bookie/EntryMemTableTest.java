@@ -25,7 +25,6 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import io.netty.buffer.ByteBuf;
-
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -40,9 +39,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
-
 import lombok.extern.slf4j.Slf4j;
-
 import org.apache.bookkeeper.bookie.Bookie.NoLedgerException;
 import org.apache.bookkeeper.conf.ServerConfiguration;
 import org.apache.bookkeeper.conf.TestBKConfiguration;
@@ -450,6 +447,26 @@ public class EntryMemTableTest implements CacheCallback, SkipListFlusher, Checkp
         for (int i = 0; i < newNumOfEntries; i++) {
             assertEquals("listOfEntries should be sorted", Long.valueOf(i + 1), listOfEntries.get(i));
         }
+    }
+
+    @Test
+    public void testAddSameEntries() throws IOException {
+        final long ledgerId = 1;
+        final long entryId = 1;
+        final int size = 10;
+        final byte[] bytes = new byte[size];
+        final int initialPermits = memTable.skipListSemaphore.availablePermits();
+
+        for (int i = 0; i < 5; i++) {
+            memTable.addEntry(ledgerId, entryId, ByteBuffer.wrap(bytes), this);
+            assertEquals(memTable.kvmap.size(), 1);
+            assertEquals(memTable.skipListSemaphore.availablePermits(), initialPermits - size);
+        }
+
+        memTable.snapshot(Checkpoint.MAX);
+        memTable.flush(this);
+        assertEquals(memTable.kvmap.size(), 0);
+        assertEquals(memTable.skipListSemaphore.availablePermits(), initialPermits);
     }
 }
 

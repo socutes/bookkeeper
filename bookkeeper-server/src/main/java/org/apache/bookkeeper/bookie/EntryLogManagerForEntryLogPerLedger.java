@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -36,9 +36,7 @@ import com.google.common.cache.LoadingCache;
 import com.google.common.cache.RemovalCause;
 import com.google.common.cache.RemovalListener;
 import com.google.common.cache.RemovalNotification;
-
 import io.netty.buffer.ByteBuf;
-
 import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
@@ -54,18 +52,16 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
-
 import lombok.extern.slf4j.Slf4j;
-
-import org.apache.bookkeeper.bookie.EntryLogger.BufferedLogChannel;
+import org.apache.bookkeeper.bookie.DefaultEntryLogger.BufferedLogChannel;
 import org.apache.bookkeeper.bookie.LedgerDirsManager.LedgerDirsListener;
+import org.apache.bookkeeper.common.util.MathUtils;
 import org.apache.bookkeeper.conf.ServerConfiguration;
 import org.apache.bookkeeper.stats.Counter;
 import org.apache.bookkeeper.stats.OpStatsLogger;
 import org.apache.bookkeeper.stats.StatsLogger;
 import org.apache.bookkeeper.stats.annotations.StatsDoc;
 import org.apache.bookkeeper.util.IOUtils;
-import org.apache.bookkeeper.util.MathUtils;
 import org.apache.bookkeeper.util.collections.ConcurrentLongHashMap;
 import org.apache.commons.lang3.mutable.MutableInt;
 
@@ -156,7 +152,7 @@ class EntryLogManagerForEntryLogPerLedger extends EntryLogManagerBase {
          * 'expiry duration' and 'maximumSize' will be set to
          * entryLogPerLedgerCounterLimitsMultFactor times of
          * 'ledgerIdEntryLogMap' cache limits. This is needed because entries
-         * from 'ledgerIdEntryLogMap' can be removed from cache becasue of
+         * from 'ledgerIdEntryLogMap' can be removed from cache because of
          * accesstime expiry or cache size limits, but to know the actual number
          * of entrylogs per ledger, we should maintain this count for long time.
          */
@@ -259,7 +255,7 @@ class EntryLogManagerForEntryLogPerLedger extends EntryLogManagerBase {
      */
     private final ConcurrentLongHashMap<BufferedLogChannelWithDirInfo> replicaOfCurrentLogChannels;
     private final CacheLoader<Long, EntryLogAndLockTuple> entryLogAndLockTupleCacheLoader;
-    private final EntryLogger.RecentEntryLogsStatus recentlyCreatedEntryLogsStatus;
+    private final DefaultEntryLogger.RecentEntryLogsStatus recentlyCreatedEntryLogsStatus;
     private final int entrylogMapAccessExpiryTimeInSeconds;
     private final int maximumNumberOfActiveEntryLogs;
     private final int entryLogPerLedgerCounterLimitsMultFactor;
@@ -269,13 +265,15 @@ class EntryLogManagerForEntryLogPerLedger extends EntryLogManagerBase {
     final EntryLogsPerLedgerCounter entryLogsPerLedgerCounter;
 
     EntryLogManagerForEntryLogPerLedger(ServerConfiguration conf, LedgerDirsManager ledgerDirsManager,
-            EntryLoggerAllocator entryLoggerAllocator, List<EntryLogger.EntryLogListener> listeners,
-            EntryLogger.RecentEntryLogsStatus recentlyCreatedEntryLogsStatus, StatsLogger statsLogger)
-            throws IOException {
+                                        EntryLoggerAllocator entryLoggerAllocator,
+                                        List<DefaultEntryLogger.EntryLogListener> listeners,
+                                        DefaultEntryLogger.RecentEntryLogsStatus recentlyCreatedEntryLogsStatus,
+                                        StatsLogger statsLogger) throws IOException {
         super(conf, ledgerDirsManager, entryLoggerAllocator, listeners);
         this.recentlyCreatedEntryLogsStatus = recentlyCreatedEntryLogsStatus;
         this.rotatedLogChannels = new CopyOnWriteArrayList<BufferedLogChannel>();
-        this.replicaOfCurrentLogChannels = new ConcurrentLongHashMap<BufferedLogChannelWithDirInfo>();
+        this.replicaOfCurrentLogChannels =
+                ConcurrentLongHashMap.<BufferedLogChannelWithDirInfo>newBuilder().build();
         this.entrylogMapAccessExpiryTimeInSeconds = conf.getEntrylogMapAccessExpiryTimeInSeconds();
         this.maximumNumberOfActiveEntryLogs = conf.getMaximumNumberOfActiveEntryLogs();
         this.entryLogPerLedgerCounterLimitsMultFactor = conf.getEntryLogPerLedgerCounterLimitsMultFactor();
@@ -336,8 +334,10 @@ class EntryLogManagerForEntryLogPerLedger extends EntryLogManagerBase {
      */
     private void onCacheEntryRemoval(RemovalNotification<Long, EntryLogAndLockTuple> removedLedgerEntryLogMapEntry) {
         Long ledgerId = removedLedgerEntryLogMapEntry.getKey();
-        log.debug("LedgerId {} is being evicted from the cache map because of {}", ledgerId,
-                removedLedgerEntryLogMapEntry.getCause());
+        if (log.isDebugEnabled()) {
+            log.debug("LedgerId {} is being evicted from the cache map because of {}", ledgerId,
+                    removedLedgerEntryLogMapEntry.getCause());
+        }
         EntryLogAndLockTuple entryLogAndLockTuple = removedLedgerEntryLogMapEntry.getValue();
         if (entryLogAndLockTuple == null) {
             log.error("entryLogAndLockTuple is not supposed to be null in entry removal listener for ledger : {}",

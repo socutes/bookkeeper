@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -49,8 +49,10 @@ import io.netty.channel.local.LocalServerChannel;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
-import io.netty.handler.codec.LengthFieldPrepender;
+import io.netty.handler.flush.FlushConsolidationHandler;
 import io.netty.handler.ssl.SslHandler;
+import io.netty.incubator.channel.uring.IOUringEventLoopGroup;
+import io.netty.incubator.channel.uring.IOUringServerSocketChannel;
 import io.netty.util.concurrent.DefaultThreadFactory;
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -77,6 +79,7 @@ import org.apache.bookkeeper.conf.ServerConfiguration;
 import org.apache.bookkeeper.net.BookieId;
 import org.apache.bookkeeper.net.BookieSocketAddress;
 import org.apache.bookkeeper.processor.RequestProcessor;
+import org.apache.bookkeeper.stats.ThreadRegistry;
 import org.apache.bookkeeper.util.ByteBufList;
 import org.apache.bookkeeper.util.EventLoopUtil;
 import org.apache.zookeeper.KeeperException;
@@ -89,10 +92,12 @@ import org.slf4j.LoggerFactory;
 class BookieNettyServer {
 
     private static final Logger LOG = LoggerFactory.getLogger(BookieNettyServer.class);
+    public static final String CONSOLIDATION_HANDLER_NAME = "consolidation";
 
     final int maxFrameSize;
     final ServerConfiguration conf;
     final EventLoopGroup eventLoopGroup;
+    final EventLoopGroup acceptorGroup;
     final EventLoopGroup jvmEventLoopGroup;
     RequestProcessor requestProcessor;
     final AtomicBoolean isRunning = new AtomicBoolean(false);
@@ -118,10 +123,19 @@ class BookieNettyServer {
         this.authProviderFactory = AuthProviderFactoryFactory.newBookieAuthProviderFactory(conf);
 
         if (!conf.isDisableServerSocketBind()) {
-            this.eventLoopGroup = EventLoopUtil.getServerEventLoopGroup(conf, new DefaultThreadFactory("bookie-io"));
+            this.eventLoopGroup = EventLoopUtil.getServerEventLoopGroup(conf,
+                    new DefaultThreadFactory("bookie-io") {
+                        @Override
+                        protected Thread newThread(Runnable r, String name) {
+                            return super.newThread(ThreadRegistry.registerThread(r, "bookie-id"), name);
+                        }
+                    });
+            this.acceptorGroup = EventLoopUtil.getServerAcceptorGroup(conf,
+                    new DefaultThreadFactory("bookie-acceptor"));
             allChannels = new CleanupChannelGroup(eventLoopGroup);
         } else {
             this.eventLoopGroup = null;
+            this.acceptorGroup = null;
         }
 
         if (conf.isEnableLocalTransport()) {
@@ -301,16 +315,18 @@ class BookieNettyServer {
             ServerBootstrap bootstrap = new ServerBootstrap();
             bootstrap.option(ChannelOption.ALLOCATOR, allocator);
             bootstrap.childOption(ChannelOption.ALLOCATOR, allocator);
-            bootstrap.group(eventLoopGroup, eventLoopGroup);
+            bootstrap.group(acceptorGroup, eventLoopGroup);
             bootstrap.childOption(ChannelOption.TCP_NODELAY, conf.getServerTcpNoDelay());
             bootstrap.childOption(ChannelOption.SO_LINGER, conf.getServerSockLinger());
             bootstrap.childOption(ChannelOption.RCVBUF_ALLOCATOR,
                     new AdaptiveRecvByteBufAllocator(conf.getRecvByteBufAllocatorSizeMin(),
                             conf.getRecvByteBufAllocatorSizeInitial(), conf.getRecvByteBufAllocatorSizeMax()));
-            bootstrap.option(ChannelOption.WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(
+            bootstrap.childOption(ChannelOption.WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(
                     conf.getServerWriteBufferLowWaterMark(), conf.getServerWriteBufferHighWaterMark()));
 
-            if (eventLoopGroup instanceof EpollEventLoopGroup) {
+            if (eventLoopGroup instanceof IOUringEventLoopGroup){
+                bootstrap.channel(IOUringServerSocketChannel.class);
+            } else if (eventLoopGroup instanceof EpollEventLoopGroup) {
                 bootstrap.channel(EpollServerSocketChannel.class);
             } else {
                 bootstrap.channel(NioServerSocketChannel.class);
@@ -329,11 +345,11 @@ class BookieNettyServer {
                         new BookieSideConnectionPeerContextHandler();
                     ChannelPipeline pipeline = ch.pipeline();
 
-                    // For ByteBufList, skip the usual LengthFieldPrepender and have the encoder itself to add it
-                    pipeline.addLast("bytebufList", ByteBufList.ENCODER_WITH_SIZE);
+                    pipeline.addLast(CONSOLIDATION_HANDLER_NAME, new FlushConsolidationHandler(1024, true));
+
+                    pipeline.addLast("bytebufList", ByteBufList.ENCODER);
 
                     pipeline.addLast("lengthbaseddecoder", new LengthFieldBasedFrameDecoder(maxFrameSize, 0, 4, 0, 4));
-                    pipeline.addLast("lengthprepender", new LengthFieldPrepender(4));
 
                     pipeline.addLast("bookieProtoDecoder", new BookieProtoEncoding.RequestDecoder(registry));
                     pipeline.addLast("bookieProtoEncoder", new BookieProtoEncoding.ResponseEncoder(registry));
@@ -352,11 +368,15 @@ class BookieNettyServer {
             // Bind and start to accept incoming connections
             LOG.info("Binding bookie-rpc endpoint to {}", address);
             Channel listen = bootstrap.bind(address.getAddress(), address.getPort()).sync().channel();
+
             if (listen.localAddress() instanceof InetSocketAddress) {
                 if (conf.getBookiePort() == 0) {
+                    // this is really really nasty. It's using the configuration object as a notification
+                    // bus. We should get rid of this at some point
                     conf.setBookiePort(((InetSocketAddress) listen.localAddress()).getPort());
                 }
             }
+
         }
 
         if (conf.isEnableLocalTransport()) {
@@ -374,6 +394,8 @@ class BookieNettyServer {
 
             if (jvmEventLoopGroup instanceof DefaultEventLoopGroup) {
                 jvmBootstrap.channel(LocalServerChannel.class);
+            } else if (jvmEventLoopGroup instanceof IOUringEventLoopGroup) {
+                jvmBootstrap.channel(IOUringServerSocketChannel.class);
             } else if (jvmEventLoopGroup instanceof EpollEventLoopGroup) {
                 jvmBootstrap.channel(EpollServerSocketChannel.class);
             } else {
@@ -394,7 +416,6 @@ class BookieNettyServer {
                     ChannelPipeline pipeline = ch.pipeline();
 
                     pipeline.addLast("lengthbaseddecoder", new LengthFieldBasedFrameDecoder(maxFrameSize, 0, 4, 0, 4));
-                    pipeline.addLast("lengthprepender", new LengthFieldPrepender(4));
 
                     pipeline.addLast("bookieProtoDecoder", new BookieProtoEncoding.RequestDecoder(registry));
                     pipeline.addLast("bookieProtoEncoder", new BookieProtoEncoding.ResponseEncoder(registry));
@@ -430,6 +451,14 @@ class BookieNettyServer {
         }
 
         allChannels.close().awaitUninterruptibly();
+
+        if (acceptorGroup != null) {
+            try {
+                acceptorGroup.shutdownGracefully(0, 10, TimeUnit.MILLISECONDS).await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
 
         if (eventLoopGroup != null) {
             try {

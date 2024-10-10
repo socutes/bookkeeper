@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -56,7 +56,7 @@ class MockReadHandle implements ReadHandle {
             return promise;
         }
 
-        bk.executor.execute(() -> {
+        bk.orderedExecutor.chooseThread().execute(() -> {
                 if (bk.getProgrammedFailStatus()) {
                     promise.completeExceptionally(BKException.create(bk.failReturnCode));
                     return;
@@ -65,13 +65,17 @@ class MockReadHandle implements ReadHandle {
                     return;
                 }
 
-                log.debug("readEntries: first={} last={} total={}", firstEntry, lastEntry, entries.size());
+                if (log.isDebugEnabled()) {
+                    log.debug("readEntries: first={} last={} total={}", firstEntry, lastEntry, entries.size());
+                }
                 List<LedgerEntry> seq = new ArrayList<>();
                 long entryId = firstEntry;
                 while (entryId <= lastEntry && entryId < entries.size()) {
                     seq.add(entries.get((int) entryId++).duplicate());
                 }
-                log.debug("Entries read: {}", seq);
+                if (log.isDebugEnabled()) {
+                    log.debug("Entries read: {}", seq);
+                }
                 promise.complete(LedgerEntriesImpl.create(seq));
             });
         return promise;

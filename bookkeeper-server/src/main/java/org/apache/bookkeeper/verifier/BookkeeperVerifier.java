@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -15,10 +15,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.bookkeeper.verifier;
 
 import static com.google.common.base.Preconditions.checkState;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -32,7 +34,6 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
-
 import org.apache.bookkeeper.client.BKException;
 
 /**
@@ -180,6 +181,7 @@ public class BookkeeperVerifier {
     /**
      * State required to regenerate an entry.
      */
+    @SuppressFBWarnings("DMI_RANDOM_USED_ONLY_ONCE")
     class EntryInfo {
         private final long entryID;
         private final long seed;
@@ -301,7 +303,7 @@ public class BookkeeperVerifier {
 
         void openWrite(long entryID) {
             writesInProgress.add(entryID);
-            System.out.format("Open writes, %s%n", writesInProgress.toString());
+            System.out.format("Open writes, %s%n", writesInProgress);
         }
 
         void incReads() {
@@ -382,7 +384,7 @@ public class BookkeeperVerifier {
                 System.out.format(
                         "checkWriteComplete: ledger %d, writesInProgress %s%n",
                         ledgerID,
-                        writesInProgress.toString());
+                        writesInProgress);
                 cb.accept(0);
             }
         }
@@ -396,7 +398,7 @@ public class BookkeeperVerifier {
                 System.out.format(
                         "checkOpComplete: ledger %d, writesInProgress %s, readsInProgress %d%n",
                         ledgerID,
-                        writesInProgress.toString(), readsInProgress);
+                        writesInProgress, readsInProgress);
                 cb.accept(0);
             }
         }
@@ -471,7 +473,7 @@ public class BookkeeperVerifier {
                                 current, ledger.ledgerID, result.length, check.length)
                         ));
                     }
-                        /* Verify contents */
+                    /* Verify contents */
                     if (!Arrays.equals(check, result)) {
                         int i = 0;
                         for (; i < check.length; ++i) {
@@ -657,7 +659,7 @@ public class BookkeeperVerifier {
 
         /* Wait for all in progress ops to complete, outstanding*Count is updated under the lock */
         while ((System.currentTimeMillis() < testDrainEnd)
-               && (outstandingReadCount > 0 || outstandingWriteCount > 0)) {
+                && (outstandingReadCount > 0 || outstandingWriteCount > 0)) {
             System.out.format("reads: %d, writes: %d%n", outstandingReadCount, outstandingWriteCount);
             System.out.format("openingLedgers:%n");
             for (LedgerInfo li: openingLedgers) {

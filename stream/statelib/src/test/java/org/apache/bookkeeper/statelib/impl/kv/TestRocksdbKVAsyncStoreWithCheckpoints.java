@@ -20,14 +20,14 @@ package org.apache.bookkeeper.statelib.impl.kv;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.apache.bookkeeper.common.concurrent.FutureUtils.result;
+import static org.apache.bookkeeper.statelib.testing.executors.MockExecutorController.THREAD_NAME_PREFIX;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.Mockito.mock;
 
-import com.google.common.io.MoreFiles;
-import com.google.common.io.RecursiveDeleteOption;
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import java.io.File;
 import java.net.URI;
 import java.nio.file.Files;
@@ -38,7 +38,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-
 import lombok.extern.slf4j.Slf4j;
 import org.apache.bookkeeper.common.coder.ByteArrayCoder;
 import org.apache.bookkeeper.common.concurrent.FutureUtils;
@@ -47,6 +46,7 @@ import org.apache.bookkeeper.statelib.api.exceptions.InvalidStateStoreException;
 import org.apache.bookkeeper.statelib.impl.rocksdb.RocksUtils;
 import org.apache.bookkeeper.statelib.impl.rocksdb.checkpoint.fs.FSCheckpointManager;
 import org.apache.bookkeeper.statelib.testing.executors.MockExecutorController;
+import org.apache.commons.io.FileUtils;
 import org.apache.distributedlog.DLMTestUtil;
 import org.apache.distributedlog.DLSN;
 import org.apache.distributedlog.TestDistributedLogBase;
@@ -119,7 +119,8 @@ public class TestRocksdbKVAsyncStoreWithCheckpoints extends TestDistributedLogBa
         checkpointStore = new FSCheckpointManager(remoteDir);
 
         // initialize the scheduler
-        realWriteExecutor = Executors.newSingleThreadExecutor();
+        realWriteExecutor = Executors.newSingleThreadExecutor(
+                new ThreadFactoryBuilder().setNameFormat(THREAD_NAME_PREFIX + "%d").build());
         mockWriteExecutor = mock(ScheduledExecutorService.class);
         writeExecutorController = new MockExecutorController(realWriteExecutor)
             .controlExecute(mockWriteExecutor)
@@ -235,9 +236,7 @@ public class TestRocksdbKVAsyncStoreWithCheckpoints extends TestDistributedLogBa
         assertTrue(files.isEmpty());
 
         // remove local dir
-        MoreFiles.deleteRecursively(
-            Paths.get(localDir.getAbsolutePath()),
-            RecursiveDeleteOption.ALLOW_INSECURE);
+        FileUtils.deleteDirectory(new File(localDir.getAbsolutePath()));
 
         // reload the store
         store = new RocksdbKVAsyncStore<>(
@@ -272,9 +271,7 @@ public class TestRocksdbKVAsyncStoreWithCheckpoints extends TestDistributedLogBa
         assertEquals(1, files.size());
 
         // remove local dir
-        MoreFiles.deleteRecursively(
-            Paths.get(localDir.getAbsolutePath()),
-            RecursiveDeleteOption.ALLOW_INSECURE);
+        FileUtils.deleteDirectory(new File(localDir.getAbsolutePath()));
 
         // reload the store
         store = new RocksdbKVAsyncStore<>(
@@ -293,9 +290,7 @@ public class TestRocksdbKVAsyncStoreWithCheckpoints extends TestDistributedLogBa
         store.close();
 
         // remove local dir
-        MoreFiles.deleteRecursively(
-            Paths.get(localDir.getAbsolutePath()),
-            RecursiveDeleteOption.ALLOW_INSECURE);
+        FileUtils.deleteDirectory(new File(localDir.getAbsolutePath()));
 
         store = new RocksdbKVAsyncStore<>(
             () -> new RocksdbKVStore<>(),

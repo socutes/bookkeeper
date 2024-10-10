@@ -34,12 +34,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Command to list the files in JournalDirectory/LedgerDirectories/IndexDirectories.
+ * Command to list the files in JournalDirectories/LedgerDirectories/IndexDirectories.
  */
 public class ListFilesOnDiscCommand extends BookieCommand<ListFilesOnDiscCommand.LFODFlags > {
 
     private static final String NAME = "listfilesondisc";
-    private static final String DESC = "List the files in JournalDirectory/LedgerDirectories/IndexDirectories.";
+    private static final String DESC = "List the files in JournalDirectories/LedgerDirectories/IndexDirectories.";
     private static final Logger LOG = LoggerFactory.getLogger(ListFilesOnDiscCommand.class);
 
     public ListFilesOnDiscCommand() {
@@ -81,7 +81,7 @@ public class ListFilesOnDiscCommand extends BookieCommand<ListFilesOnDiscCommand
             List<File> journalFiles = BookieShell.listFilesAndSort(journalDirs, "txn");
             LOG.info("--------- Printing the list of Journal Files ---------");
             for (File journalFile : journalFiles) {
-                LOG.info(journalFile.getCanonicalPath());
+                LOG.info("{}", journalFile.getCanonicalPath());
             }
             LOG.info("");
         }
@@ -90,7 +90,7 @@ public class ListFilesOnDiscCommand extends BookieCommand<ListFilesOnDiscCommand
             List<File> ledgerFiles = BookieShell.listFilesAndSort(ledgerDirs, "log");
             LOG.info("--------- Printing the list of EntryLog/Ledger Files ---------");
             for (File ledgerFile : ledgerFiles) {
-                LOG.info(ledgerFile.getCanonicalPath());
+                LOG.info("{}", ledgerFile.getCanonicalPath());
             }
             LOG.info("");
         }
@@ -99,7 +99,7 @@ public class ListFilesOnDiscCommand extends BookieCommand<ListFilesOnDiscCommand
             List<File> indexFiles = BookieShell.listFilesAndSort(indexDirs, "idx");
             LOG.info("--------- Printing the list of Index Files ---------");
             for (File indexFile : indexFiles) {
-                LOG.info(indexFile.getCanonicalPath());
+                LOG.info("{}", indexFile.getCanonicalPath());
             }
         }
         return true;

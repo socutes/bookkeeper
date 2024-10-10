@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -62,7 +62,7 @@ public class TestUtils extends ZooKeeperClusterTestCase {
     }
 
     @Test(timeout = 60000)
-    public void testZkAsyncCreateFulPathOptimisticRecursive() throws Exception {
+    public void testZkAsyncCreateFullPathOptimisticRecursive() throws Exception {
         String path1 = "/a/b/c/d";
         Optional<String> parentPathShouldNotCreate = Optional.empty();
         final CountDownLatch doneLatch1 = new CountDownLatch(1);

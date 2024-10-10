@@ -22,23 +22,22 @@
 package org.apache.bookkeeper.proto;
 
 import io.netty.buffer.ByteBuf;
-
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-
 import org.apache.bookkeeper.client.BKException;
 import org.apache.bookkeeper.client.BookieInfoReader.BookieInfo;
 import org.apache.bookkeeper.client.LedgerEntry;
 import org.apache.bookkeeper.client.LedgerHandle;
 import org.apache.bookkeeper.client.api.LedgerMetadata;
+import org.apache.bookkeeper.common.util.MathUtils;
 import org.apache.bookkeeper.net.BookieId;
 import org.apache.bookkeeper.stats.OpStatsLogger;
 import org.apache.bookkeeper.util.AvailabilityOfEntriesOfLedger;
-import org.apache.bookkeeper.util.MathUtils;
+import org.apache.bookkeeper.util.ByteBufList;
 import org.apache.bookkeeper.versioning.Versioned;
 import org.apache.zookeeper.AsyncCallback;
 import org.slf4j.Logger;
@@ -221,6 +220,16 @@ public class BookkeeperInternalCallbacks {
      */
     public interface ReadEntryCallback {
         void readEntryComplete(int rc, long ledgerId, long entryId, ByteBuf buffer, Object ctx);
+    }
+
+    /**
+     * Declaration of a callback implementation for calls from BookieClient objects.
+     * Such calls are for replies of batched read operations (operations to read multi entries
+     * from a ledger).
+     *
+     */
+    public interface BatchedReadEntryCallback {
+        void readEntriesComplete(int rc, long ledgerId, long startEntryId, ByteBufList bufList, Object ctx);
     }
 
     /**

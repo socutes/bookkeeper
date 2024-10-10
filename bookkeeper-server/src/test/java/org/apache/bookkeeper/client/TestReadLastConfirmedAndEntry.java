@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -23,6 +23,7 @@ package org.apache.bookkeeper.client;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
+
 import io.netty.buffer.ByteBuf;
 import java.io.IOException;
 import java.util.Arrays;
@@ -34,15 +35,14 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import org.apache.bookkeeper.bookie.Bookie;
 import org.apache.bookkeeper.bookie.BookieException;
-import org.apache.bookkeeper.bookie.BookieImpl;
 import org.apache.bookkeeper.bookie.InterleavedLedgerStorage;
 import org.apache.bookkeeper.bookie.LedgerStorage;
 import org.apache.bookkeeper.bookie.SortedLedgerStorage;
+import org.apache.bookkeeper.bookie.TestBookieImpl;
 import org.apache.bookkeeper.bookie.storage.ldb.DbLedgerStorage;
 import org.apache.bookkeeper.conf.ClientConfiguration;
 import org.apache.bookkeeper.conf.ServerConfiguration;
 import org.apache.bookkeeper.test.BookKeeperClusterTestCase;
-import org.apache.zookeeper.KeeperException;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -76,13 +76,13 @@ public class TestReadLastConfirmedAndEntry extends BookKeeperClusterTestCase {
         });
     }
 
-    static class FakeBookie extends BookieImpl {
+    static class FakeBookie extends TestBookieImpl {
 
         final long expectedEntryToFail;
         final boolean stallOrRespondNull;
 
         public FakeBookie(ServerConfiguration conf, long expectedEntryToFail, boolean stallOrRespondNull)
-                throws InterruptedException, BookieException, KeeperException, IOException {
+                throws Exception {
             super(conf);
             this.expectedEntryToFail = expectedEntryToFail;
             this.stallOrRespondNull = stallOrRespondNull;
@@ -90,7 +90,7 @@ public class TestReadLastConfirmedAndEntry extends BookKeeperClusterTestCase {
 
         @Override
         public ByteBuf readEntry(long ledgerId, long entryId)
-                throws IOException, NoLedgerException {
+                throws IOException, NoLedgerException, BookieException {
             if (entryId == expectedEntryToFail) {
                 if (stallOrRespondNull) {
                     try {
@@ -173,21 +173,21 @@ public class TestReadLastConfirmedAndEntry extends BookKeeperClusterTestCase {
         assertEquals(BKException.Code.OK, rcHolder.get());
     }
 
-    static class SlowReadLacBookie extends BookieImpl {
+    static class SlowReadLacBookie extends TestBookieImpl {
 
         private final long lacToSlowRead;
         private final CountDownLatch readLatch;
 
         public SlowReadLacBookie(ServerConfiguration conf,
                                  long lacToSlowRead, CountDownLatch readLatch)
-                throws IOException, KeeperException, InterruptedException, BookieException {
+                throws Exception {
             super(conf);
             this.lacToSlowRead = lacToSlowRead;
             this.readLatch = readLatch;
         }
 
         @Override
-        public long readLastAddConfirmed(long ledgerId) throws IOException {
+        public long readLastAddConfirmed(long ledgerId) throws IOException, BookieException {
             long lac = super.readLastAddConfirmed(ledgerId);
             logger.info("Last Add Confirmed for ledger {} is {}", ledgerId, lac);
             if (lacToSlowRead == lac) {

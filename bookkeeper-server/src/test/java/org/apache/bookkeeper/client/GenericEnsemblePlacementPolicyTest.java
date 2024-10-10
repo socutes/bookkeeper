@@ -30,7 +30,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-
 import org.apache.bookkeeper.net.BookieId;
 import org.apache.bookkeeper.test.BookKeeperClusterTestCase;
 import org.junit.Before;
@@ -114,7 +113,7 @@ public class GenericEnsemblePlacementPolicyTest extends BookKeeperClusterTestCas
     }
 
     @Test
-    public void testNewEnsembleWithNotEnoughtBookies() throws Exception {
+    public void testNewEnsembleWithNotEnoughBookies() throws Exception {
         numBookies = 0;
         try {
             startBKCluster(zkUtil.getMetadataServiceUri());

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -84,7 +84,18 @@ public interface LedgerManagerFactory extends AutoCloseable {
      * @see LedgerUnderreplicationManager
      */
     LedgerUnderreplicationManager newLedgerUnderreplicationManager()
-            throws KeeperException, InterruptedException, ReplicationException.CompatibilityException;
+            throws ReplicationException.UnavailableException,
+            InterruptedException, ReplicationException.CompatibilityException;
+
+
+    /**
+     * Return a ledger auditor manager, which is used to
+     * coordinate the auto-recovery process.
+     *
+     * @return ledger auditor manager
+     * @see LedgerAuditorManager
+     */
+    LedgerAuditorManager newLedgerAuditorManager() throws IOException, InterruptedException;
 
     /**
      * Format the ledger metadata for LedgerManager.

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,11 +19,10 @@ package org.apache.bookkeeper.client;
 
 import java.util.BitSet;
 import java.util.Map;
-
 import org.apache.bookkeeper.net.BookieId;
 
 /**
- * This interface determins how entries are distributed among bookies.
+ * This interface determines how entries are distributed among bookies.
  *
  * <p>Every entry gets replicated to some number of replicas. The first replica for
  * an entry is given a replicaIndex of 0, and so on. To distribute write load,
@@ -137,10 +136,22 @@ public interface DistributionSchedule {
             }
         };
 
+    int getWriteQuorumSize();
+
     /**
      * Return the set of bookie indices to send the message to.
      */
     WriteSet getWriteSet(long entryId);
+
+    /**
+     * Return the WriteSet bookie index for a given and index
+     * in the WriteSet.
+     *
+     * @param entryId
+     * @param writeSetIndex
+     * @return
+     */
+    int getWriteSetBookieIndex(long entryId, int writeSetIndex);
 
     /**
      * Return the set of bookies indices to send the messages to the whole ensemble.

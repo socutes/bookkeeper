@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -23,8 +23,8 @@ package org.apache.bookkeeper.zookeeper;
 import com.google.common.util.concurrent.RateLimiter;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
+import org.apache.bookkeeper.common.util.MathUtils;
 import org.apache.bookkeeper.stats.OpStatsLogger;
-import org.apache.bookkeeper.util.MathUtils;
 import org.apache.zookeeper.KeeperException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

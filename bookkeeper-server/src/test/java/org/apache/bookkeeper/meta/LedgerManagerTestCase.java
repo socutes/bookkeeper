@@ -23,23 +23,21 @@ package org.apache.bookkeeper.meta;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
-
 import java.io.IOException;
 import java.net.URI;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.EnumSet;
 import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Optional;
 import java.util.PrimitiveIterator.OfLong;
-
 import org.apache.bookkeeper.bookie.BookieException;
 import org.apache.bookkeeper.bookie.CheckpointSource;
 import org.apache.bookkeeper.bookie.CheckpointSource.Checkpoint;
 import org.apache.bookkeeper.bookie.Checkpointer;
 import org.apache.bookkeeper.bookie.CompactableLedgerStorage;
 import org.apache.bookkeeper.bookie.EntryLocation;
-import org.apache.bookkeeper.bookie.EntryLogger;
 import org.apache.bookkeeper.bookie.LastAddConfirmedUpdateNotification;
 import org.apache.bookkeeper.bookie.LedgerDirsManager;
 import org.apache.bookkeeper.bookie.StateManager;
@@ -57,7 +55,7 @@ import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
 
 /**
- * Test case to run over serveral ledger managers.
+ * Test case to run over several ledger managers.
  */
 @RunWith(Parameterized.class)
 public abstract class LedgerManagerTestCase extends BookKeeperClusterTestCase {
@@ -174,12 +172,16 @@ public abstract class LedgerManagerTestCase extends BookKeeperClusterTestCase {
             LedgerManager ledgerManager,
             LedgerDirsManager ledgerDirsManager,
             LedgerDirsManager indexDirsManager,
-            StateManager stateManager,
-            CheckpointSource checkpointSource,
-            Checkpointer checkpointer,
             StatsLogger statsLogger,
             ByteBufAllocator allocator) throws IOException {
         }
+
+        @Override
+        public void setStateManager(StateManager stateManager) {}
+        @Override
+        public void setCheckpointSource(CheckpointSource checkpointSource) {}
+        @Override
+        public void setCheckpointer(Checkpointer checkpointer) {}
 
         @Override
         public void start() {
@@ -191,6 +193,11 @@ public abstract class LedgerManagerTestCase extends BookKeeperClusterTestCase {
 
         @Override
         public boolean ledgerExists(long ledgerId) throws IOException {
+            return false;
+        }
+
+        @Override
+        public boolean entryExists(long ledgerId, long entryId) throws IOException {
             return false;
         }
 
@@ -255,11 +262,6 @@ public abstract class LedgerManagerTestCase extends BookKeeperClusterTestCase {
         }
 
         @Override
-        public EntryLogger getEntryLogger() {
-            return null;
-        }
-
-        @Override
         public void updateEntriesLocations(Iterable<EntryLocation> locations) throws IOException {
         }
 
@@ -293,6 +295,37 @@ public abstract class LedgerManagerTestCase extends BookKeeperClusterTestCase {
         @Override
         public OfLong getListOfEntriesOfLedger(long ledgerId) {
             return null;
+        }
+
+        @Override
+        public void setLimboState(long ledgerId) throws IOException {
+            throw new UnsupportedOperationException(
+                    "Limbo state only supported for DbLedgerStorage");
+        }
+
+        @Override
+        public boolean hasLimboState(long ledgerId) throws IOException {
+            throw new UnsupportedOperationException(
+                    "Limbo state only supported for DbLedgerStorage");
+        }
+
+        @Override
+        public void clearLimboState(long ledgerId) throws IOException {
+            throw new UnsupportedOperationException(
+                    "Limbo state only supported for DbLedgerStorage");
+        }
+
+        @Override
+        public EnumSet<StorageState> getStorageStateFlags() throws IOException {
+            return EnumSet.noneOf(StorageState.class);
+        }
+
+        @Override
+        public void setStorageStateFlag(StorageState flag) throws IOException {
+        }
+
+        @Override
+        public void clearStorageStateFlag(StorageState flag) throws IOException {
         }
     }
 }

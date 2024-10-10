@@ -26,7 +26,6 @@ import java.nio.ByteBuffer;
 import java.util.Random;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-
 import org.apache.bookkeeper.client.AsyncCallback.AddCallback;
 import org.apache.bookkeeper.client.BKException;
 import org.apache.bookkeeper.client.BookKeeper.DigestType;
@@ -120,7 +119,7 @@ public class BookieShutdownTest extends BookKeeperClusterTestCase {
         killBookie(0);
         final CountDownLatch latch = new CountDownLatch(1);
         final CountDownLatch shutdownComplete = new CountDownLatch(1);
-        Bookie bookie = new BookieImpl(conf) {
+        Bookie bookie = new TestBookieImpl(conf) {
             @Override
             public void run() {
                 try {

@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -24,6 +24,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -34,12 +35,12 @@ import org.apache.bookkeeper.bookie.BookieShell.UpdateLedgerNotifier;
 import org.apache.bookkeeper.client.AsyncCallback.AddCallback;
 import org.apache.bookkeeper.client.BookKeeper.DigestType;
 import org.apache.bookkeeper.client.api.LedgerMetadata;
+import org.apache.bookkeeper.common.util.MathUtils;
 import org.apache.bookkeeper.conf.ServerConfiguration;
 import org.apache.bookkeeper.net.BookieId;
 import org.apache.bookkeeper.net.BookieSocketAddress;
 import org.apache.bookkeeper.proto.BookieServer;
 import org.apache.bookkeeper.test.BookKeeperClusterTestCase;
-import org.apache.bookkeeper.util.MathUtils;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,7 +50,7 @@ import org.slf4j.LoggerFactory;
  */
 public class UpdateLedgerOpTest extends BookKeeperClusterTestCase {
     private static final Logger LOG = LoggerFactory.getLogger(UpdateLedgerOpTest.class);
-    private DigestType digestType = DigestType.CRC32;
+    private final DigestType digestType = DigestType.CRC32;
     private static final String PASSWORD = "testPasswd";
     private static final int printprogress = 5;
 
@@ -89,7 +90,7 @@ public class UpdateLedgerOpTest extends BookKeeperClusterTestCase {
 
     public void testManyLedgers(boolean useShortHostName) throws Exception {
         try (BookKeeper bk = new BookKeeper(baseClientConf, zkc);
-            BookKeeperAdmin bkadmin = new BookKeeperAdmin(bk)) {
+            BookKeeperAdmin bkadmin = new BookKeeperAdmin(bk, baseClientConf)) {
 
             LOG.info("Create ledger and add entries to it");
             List<LedgerHandle> ledgers = new ArrayList<LedgerHandle>();
@@ -129,7 +130,7 @@ public class UpdateLedgerOpTest extends BookKeeperClusterTestCase {
     @Test
     public void testLimitLessThanTotalLedgers() throws Exception {
         try (BookKeeper bk = new BookKeeper(baseClientConf, zkc);
-            BookKeeperAdmin bkadmin = new BookKeeperAdmin(bk)) {
+            BookKeeperAdmin bkadmin = new BookKeeperAdmin(bk, baseClientConf)) {
 
             LOG.info("Create ledger and add entries to it");
             List<LedgerHandle> ledgers = new ArrayList<LedgerHandle>();
@@ -190,7 +191,7 @@ public class UpdateLedgerOpTest extends BookKeeperClusterTestCase {
     public void testChangeEnsembleAfterRenaming(boolean useShortHostName) throws Exception {
 
         try (BookKeeper bk = new BookKeeper(baseClientConf, zkc);
-            BookKeeperAdmin bkadmin = new BookKeeperAdmin(bk)) {
+            BookKeeperAdmin bkadmin = new BookKeeperAdmin(bk, baseClientConf)) {
 
             LOG.info("Create ledger and add entries to it");
             LedgerHandle lh = createLedgerWithEntries(bk, 100);
@@ -250,7 +251,7 @@ public class UpdateLedgerOpTest extends BookKeeperClusterTestCase {
     @Test
     public void testRenameWhenAddEntryInProgress() throws Exception {
         try (final BookKeeper bk = new BookKeeper(baseClientConf, zkc);
-            BookKeeperAdmin bkadmin = new BookKeeperAdmin(bk)) {
+            BookKeeperAdmin bkadmin = new BookKeeperAdmin(bk, baseClientConf)) {
 
             LOG.info("Create ledger and add entries to it");
             final int numOfEntries = 5000;

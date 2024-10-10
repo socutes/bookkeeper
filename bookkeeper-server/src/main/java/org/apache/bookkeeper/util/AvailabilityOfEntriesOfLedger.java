@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -26,7 +26,6 @@ import java.util.List;
 import java.util.Map.Entry;
 import java.util.PrimitiveIterator;
 import java.util.TreeMap;
-
 import org.apache.commons.lang3.mutable.MutableInt;
 import org.apache.commons.lang3.mutable.MutableLong;
 import org.apache.commons.lang3.mutable.MutableObject;
@@ -179,14 +178,14 @@ public class AvailabilityOfEntriesOfLedger {
 
     public AvailabilityOfEntriesOfLedger(PrimitiveIterator.OfLong entriesOfLedgerItr) {
         while (entriesOfLedgerItr.hasNext()) {
-            this.addEntryToAvailabileEntriesOfLedger(entriesOfLedgerItr.nextLong());
+            this.addEntryToAvailableEntriesOfLedger(entriesOfLedgerItr.nextLong());
         }
         this.closeStateOfEntriesOfALedger();
     }
 
     public AvailabilityOfEntriesOfLedger(long[] entriesOfLedger) {
         for (long entry : entriesOfLedger) {
-            this.addEntryToAvailabileEntriesOfLedger(entry);
+            this.addEntryToAvailableEntriesOfLedger(entry);
         }
         this.closeStateOfEntriesOfALedger();
     }
@@ -311,7 +310,7 @@ public class AvailabilityOfEntriesOfLedger {
         }
     }
 
-    private void addEntryToAvailabileEntriesOfLedger(long entryId) {
+    private void addEntryToAvailableEntriesOfLedger(long entryId) {
         if (!isCurSequenceInitialized()) {
             initializeCurSequence(entryId);
         } else if (isEntryExistingInCurSequence(entryId)) {

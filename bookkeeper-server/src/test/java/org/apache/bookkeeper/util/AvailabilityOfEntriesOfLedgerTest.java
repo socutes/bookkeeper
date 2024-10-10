@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -31,7 +31,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.PrimitiveIterator;
 import java.util.Set;
-
 import org.junit.Test;
 
 /**
@@ -295,7 +294,7 @@ public class AvailabilityOfEntriesOfLedgerTest {
         for (int i = 0; i < bitSetOfAvailability.length(); i++) {
             long entryId = startEntryId + i;
             if (bitSetOfAvailability.get(i)) {
-                assertTrue("Unavailable entry", unavailableEntries.contains(Long.valueOf(entryId)));
+                assertTrue("Unavailable entry", unavailableEntries.contains(entryId));
             }
         }
     }

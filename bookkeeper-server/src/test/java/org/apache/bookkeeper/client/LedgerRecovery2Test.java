@@ -21,7 +21,6 @@
 package org.apache.bookkeeper.client;
 
 import com.google.common.collect.Lists;
-
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -29,7 +28,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-
 import org.apache.bookkeeper.client.api.DigestType;
 import org.apache.bookkeeper.client.api.LedgerMetadata;
 import org.apache.bookkeeper.client.api.WriteFlag;
@@ -41,7 +39,6 @@ import org.apache.bookkeeper.proto.MockBookies;
 import org.apache.bookkeeper.versioning.Versioned;
 import org.junit.Assert;
 import org.junit.Test;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -297,7 +294,7 @@ public class LedgerRecovery2Test {
     }
 
     /**
-     * This test verifies the fix for the data loss scenario found by the TLA+ specfication, specifically
+     * This test verifies the fix for the data loss scenario found by the TLA+ specification, specifically
      * the invariant violation that metadata and writer can diverge. The scenario is that the original writer
      * can commit an entry e that will later be lost because a second writer can close the ledger at e-1.
      * The cause is that fencing was originally only performed on LAC reads which is not enough to prevent

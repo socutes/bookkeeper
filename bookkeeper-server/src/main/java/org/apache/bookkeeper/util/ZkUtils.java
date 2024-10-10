@@ -26,7 +26,6 @@ import java.io.IOException;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
-
 import org.apache.bookkeeper.conf.AbstractConfiguration;
 import org.apache.bookkeeper.proto.BookkeeperInternalCallbacks.GenericCallback;
 import org.apache.zookeeper.AsyncCallback;
@@ -42,7 +41,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Provided utilites for zookeeper access, etc.
+ * Provided utilities for zookeeper access, etc.
  */
 public class ZkUtils {
     private static final Logger LOG = LoggerFactory.getLogger(ZkUtils.class);

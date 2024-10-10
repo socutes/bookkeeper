@@ -18,17 +18,13 @@
 package org.apache.bookkeeper.tests.backwardcompat
 
 import com.github.dockerjava.api.DockerClient
-
 import org.apache.bookkeeper.tests.integration.utils.BookKeeperClusterUtils
 import org.apache.bookkeeper.tests.integration.utils.MavenClassLoader
-
 import org.jboss.arquillian.junit.Arquillian
 import org.jboss.arquillian.test.api.ArquillianResource
-
 import org.junit.Assert
 import org.junit.Test
 import org.junit.runner.RunWith
-
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -45,7 +41,7 @@ class TestCompatUpgradeOldServerInClusterWithCookies {
         BookKeeperClusterUtils.legacyMetadataFormat(docker)
         String zookeeper = BookKeeperClusterUtils.zookeeperConnectString(docker)
 
-        String currentVersion = System.getProperty("currentVersion")
+        String currentVersion = BookKeeperClusterUtils.CURRENT_VERSION
         int numEntries = 10
 
         Assert.assertTrue(BookKeeperClusterUtils.startAllBookiesWithVersion(docker, "4.1.0"))

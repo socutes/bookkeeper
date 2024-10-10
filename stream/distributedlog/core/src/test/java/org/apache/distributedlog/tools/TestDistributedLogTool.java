@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -161,7 +161,7 @@ public class TestDistributedLogTool extends TestDistributedLogBase {
         DumpCommand cmd = new DumpCommand();
         cmd.setUri(defaultUri);
         cmd.setStreamName("DefaultStream");
-        cmd.setFromTxnId(Long.valueOf(0));
+        cmd.setFromTxnId(0L);
         assertEquals(0, cmd.runCmd());
     }
 
@@ -199,7 +199,7 @@ public class TestDistributedLogTool extends TestDistributedLogBase {
         cmd.setUri(defaultUri);
         cmd.setLedgerId(99999999);
 
-        // Too hard to predict ledger entry id. Settle for basicaly
+        // Too hard to predict ledger entry id. Settle for basically
         // correct functionality.
         try {
             cmd.runCmd();

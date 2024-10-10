@@ -25,7 +25,6 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import com.google.protobuf.ExtensionRegistry;
-
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
 import io.netty.channel.EventLoopGroup;
@@ -33,16 +32,15 @@ import io.netty.channel.epoll.Epoll;
 import io.netty.channel.epoll.EpollChannelOption;
 import io.netty.channel.epoll.EpollEventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
-
 import java.io.IOException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-
 import org.apache.bookkeeper.auth.AuthProviderFactoryFactory;
 import org.apache.bookkeeper.auth.ClientAuthProvider;
 import org.apache.bookkeeper.bookie.Bookie;
-import org.apache.bookkeeper.bookie.BookieImpl;
+import org.apache.bookkeeper.bookie.BookieException;
+import org.apache.bookkeeper.bookie.TestBookieImpl;
 import org.apache.bookkeeper.client.BKException;
 import org.apache.bookkeeper.common.util.OrderedExecutor;
 import org.apache.bookkeeper.conf.ClientConfiguration;
@@ -54,7 +52,6 @@ import org.apache.bookkeeper.proto.BookkeeperInternalCallbacks.ReadEntryCallback
 import org.apache.bookkeeper.proto.PerChannelBookieClient.ConnectionState;
 import org.apache.bookkeeper.stats.StatsLogger;
 import org.apache.bookkeeper.test.BookKeeperClusterTestCase;
-import org.apache.bookkeeper.util.SafeRunnable;
 import org.junit.Assume;
 import org.junit.Test;
 import org.mockito.Mockito;
@@ -244,10 +241,10 @@ public class TestPerChannelBookieClient extends BookKeeperClusterTestCase {
     public void testRequestCompletesAfterDisconnectRace() throws Exception {
         ServerConfiguration conf = killBookie(0);
 
-        Bookie delayBookie = new BookieImpl(conf) {
+        Bookie delayBookie = new TestBookieImpl(conf) {
             @Override
             public ByteBuf readEntry(long ledgerId, long entryId)
-                    throws IOException, NoLedgerException {
+                    throws IOException, NoLedgerException, BookieException {
                 try {
                     Thread.sleep(3000);
                 } catch (InterruptedException ie) {
@@ -279,12 +276,7 @@ public class TestPerChannelBookieClient extends BookKeeperClusterTestCase {
             @Override
             public void operationComplete(final int rc, PerChannelBookieClient pcbc) {
                 if (rc != BKException.Code.OK) {
-                    executor.executeOrdered(1, new SafeRunnable() {
-                        @Override
-                        public void safeRun() {
-                            cb.readEntryComplete(rc, 1, 1, null, null);
-                        }
-                    });
+                    executor.executeOrdered(1, () -> cb.readEntryComplete(rc, 1, 1, null, null));
                     return;
                 }
 
@@ -314,7 +306,7 @@ public class TestPerChannelBookieClient extends BookKeeperClusterTestCase {
         EventLoopGroup eventLoopGroup = new EpollEventLoopGroup();
         OrderedExecutor executor = getOrderedSafeExecutor();
         ClientConfiguration conf = new ClientConfiguration();
-        int tcpUserTimeout = 1234;
+        int tcpUserTimeout = 1236; // this value may be rounded on some Linux implementations
         BookieId addr = getBookie(0);
 
         // Pass to the PerChannelBookieClient object the client configuration with TCP user timeout.

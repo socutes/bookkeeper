@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -24,7 +24,6 @@ import static org.junit.Assert.assertEquals;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.UnpooledByteBufAllocator;
-
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -33,7 +32,6 @@ import java.util.PrimitiveIterator.OfLong;
 import java.util.concurrent.CountDownLatch;
 import java.util.function.Consumer;
 import java.util.stream.IntStream;
-
 import org.apache.bookkeeper.client.BookKeeper;
 import org.apache.bookkeeper.client.LedgerHandle;
 import org.apache.bookkeeper.conf.ClientConfiguration;
@@ -142,7 +140,7 @@ public class LedgerStorageTest extends BookKeeperClusterTestCase {
          * purpose.
          */
         newBookieConf.setMetadataServiceUri(null);
-        BookieImpl newbookie = new BookieImpl(newBookieConf);
+        BookieImpl newbookie = new TestBookieImpl(newBookieConf);
         /*
          * since 'newbookie' uses the same data as original Bookie, it should be
          * able to read journal of the original bookie and hence explicitLac buf
@@ -307,7 +305,7 @@ public class LedgerStorageTest extends BookKeeperClusterTestCase {
          * purpose.
          */
         newBookieConf.setMetadataServiceUri(null);
-        BookieImpl newbookie = new BookieImpl(newBookieConf);
+        BookieImpl newbookie = new TestBookieImpl(newBookieConf);
         /*
          * since 'newbookie' uses the same data as original Bookie, it should be
          * able to read journal of the original bookie.

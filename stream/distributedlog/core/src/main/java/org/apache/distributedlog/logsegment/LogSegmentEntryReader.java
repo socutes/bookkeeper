@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -84,7 +84,7 @@ public interface LogSegmentEntryReader extends AsyncCloseable {
      *  <p><i>numEntries</i> will be best-effort.
      *
      * @param numEntries num entries to read from current log segment
-     * @return A promise that when satisified will contain a non-empty list of entries with their content.
+     * @return A promise that when satisfied will contain a non-empty list of entries with their content.
      * @throw {@link org.apache.distributedlog.exceptions.EndOfLogSegmentException} when
      *          read entries beyond the end of a <i>closed</i> log segment.
      */

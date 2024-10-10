@@ -22,7 +22,6 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
-
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -92,14 +91,29 @@ public class MacDigestManager extends DigestManager {
 
 
     @Override
-    void populateValueAndReset(ByteBuf buffer) {
+    void populateValueAndReset(int digest, ByteBuf buffer) {
         buffer.writeBytes(mac.get().doFinal());
     }
 
     @Override
-    void update(ByteBuf data) {
-        mac.get().update(data.nioBuffer());
+    int internalUpdate(int digest, ByteBuf data, int offset, int len) {
+        mac.get().update(data.slice(offset, len).nioBuffer());
+        return 0;
     }
 
+    @Override
+    int internalUpdate(int digest, byte[] buffer, int offset, int len) {
+        mac.get().update(buffer, offset, len);
+        return 0;
+    }
 
+    @Override
+    boolean isInt32Digest() {
+        return false;
+    }
+
+    @Override
+    boolean acceptsMemoryAddressBuffer() {
+        return false;
+    }
 }

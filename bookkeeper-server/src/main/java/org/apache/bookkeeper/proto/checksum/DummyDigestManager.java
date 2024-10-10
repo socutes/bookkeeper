@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -38,8 +38,25 @@ public class DummyDigestManager extends DigestManager {
     }
 
     @Override
-    void update(ByteBuf buffer) {}
+    int internalUpdate(int digest, ByteBuf buffer, int offset, int len) {
+        return 0;
+    }
 
     @Override
-    void populateValueAndReset(ByteBuf buffer) {}
+    int internalUpdate(int digest, byte[] buffer, int offset, int len) {
+        return 0;
+    }
+
+    @Override
+    void populateValueAndReset(int digest, ByteBuf buffer) {}
+
+    @Override
+    boolean isInt32Digest() {
+        return false;
+    }
+
+    @Override
+    boolean acceptsMemoryAddressBuffer() {
+        return false;
+    }
 }

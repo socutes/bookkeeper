@@ -18,11 +18,9 @@
 package org.apache.bookkeeper.proto.checksum;
 
 import io.netty.buffer.ByteBuf;
-
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.zip.CRC32;
-
 import org.apache.bookkeeper.proto.checksum.CRC32DigestManager.CRC32Digest;
 
 /**
@@ -45,23 +43,34 @@ class DirectMemoryCRC32Digest implements CRC32Digest {
     }
 
     @Override
-    public void update(ByteBuf buf) {
-        int index = buf.readerIndex();
-        int length = buf.readableBytes();
-
+    public void update(ByteBuf buf, int index, int length) {
         try {
             if (buf.hasMemoryAddress()) {
                 // Calculate CRC directly from the direct memory pointer
                 crcValue = (int) updateByteBuffer.invoke(null, crcValue, buf.memoryAddress(), index, length);
             } else if (buf.hasArray()) {
                 // Use the internal method to update from array based
-                crcValue = (int) updateBytes.invoke(null, crcValue, buf.array(), buf.arrayOffset() + index, length);
+                crcValue = updateArray(crcValue, buf.array(), buf.arrayOffset() + index, length);
             } else {
                 // Fallback to data copy if buffer is not contiguous
                 byte[] b = new byte[length];
                 buf.getBytes(index, b, 0, length);
-                crcValue = (int) updateBytes.invoke(null, crcValue, b, 0, b.length);
+                crcValue = updateArray(crcValue, b, 0, length);
             }
+        } catch (IllegalAccessException | InvocationTargetException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static int updateArray(int crcValue, byte[] buf, int offset, int length)
+            throws IllegalAccessException, InvocationTargetException {
+        return (int) updateBytes.invoke(null, crcValue, buf, offset, length);
+    }
+
+    @Override
+    public void update(byte[] buffer, int offset, int len) {
+        try {
+            crcValue = updateArray(crcValue, buffer, offset, len);
         } catch (IllegalAccessException | InvocationTargetException e) {
             throw new RuntimeException(e);
         }
@@ -83,7 +92,7 @@ class DirectMemoryCRC32Digest implements CRC32Digest {
             updateBytesMethod = CRC32.class.getDeclaredMethod("updateBytes", int.class, byte[].class, int.class,
                     int.class);
             updateBytesMethod.setAccessible(true);
-        } catch (NoSuchMethodException | SecurityException e) {
+        } catch (Throwable e) {
             updateByteBufferMethod = null;
             updateBytesMethod = null;
         }

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -27,21 +27,16 @@ import static org.mockito.Mockito.verify;
 
 import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
-
 import java.util.List;
-
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
-
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-
 import lombok.AllArgsConstructor;
 import lombok.Data;
-
 import org.apache.bookkeeper.client.api.DigestType;
 import org.apache.bookkeeper.client.api.LedgerMetadata;
 import org.apache.bookkeeper.meta.LedgerManager;
@@ -51,10 +46,8 @@ import org.apache.bookkeeper.net.BookieSocketAddress;
 import org.apache.bookkeeper.versioning.Version;
 import org.apache.bookkeeper.versioning.Versioned;
 import org.apache.commons.lang3.tuple.Triple;
-
 import org.junit.Assert;
 import org.junit.Test;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -105,7 +98,7 @@ public class MetadataUpdateLoopTest {
     }
 
     /**
-     * Test that when 2 update loops conflict when making diffent updates to the metadata,
+     * Test that when 2 update loops conflict when making different updates to the metadata,
      * both will eventually succeed, and both updates will be reflected in the final metadata.
      */
     @Test
@@ -453,7 +446,7 @@ public class MetadataUpdateLoopTest {
                 .whenComplete((written, exception) -> {
                         synchronized (DeferCallbacksMockLedgerManager.this) {
                             if (writeCount++ < numToDefer) {
-                                LOG.info("Added to deferals");
+                                LOG.info("Added to deferrals");
                                 deferred.add(Triple.of(promise, written, exception));
                             } else {
                                 LOG.info("Completing {}", numToDefer);

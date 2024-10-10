@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -23,20 +23,23 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.when;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.buffer.PooledByteBufAllocator;
 import io.netty.buffer.UnpooledByteBufAllocator;
-
+import io.netty.util.ReferenceCountUtil;
 import java.lang.reflect.Constructor;
 import java.util.concurrent.atomic.AtomicReference;
-
 import org.apache.bookkeeper.common.allocator.ByteBufAllocatorBuilder;
 import org.apache.bookkeeper.common.allocator.OutOfMemoryPolicy;
 import org.apache.bookkeeper.common.allocator.PoolingPolicy;
+import org.apache.bookkeeper.common.util.ShutdownUtil;
 import org.junit.Test;
+import org.mockito.MockedStatic;
+import org.mockito.Mockito;
 
 /**
  * Tests for {@link ByteBufAllocatorBuilderImpl}.
@@ -86,6 +89,30 @@ public class ByteBufAllocatorBuilderTest {
 
         // Ensure the notification was triggered even when exception is thrown
         assertEquals(outOfDirectMemException, receivedException.get());
+    }
+
+    @Test()
+    public void testOomExit() {
+        ByteBufAllocator baseAlloc = mock(ByteBufAllocator.class);
+        when(baseAlloc.directBuffer(anyInt(), anyInt())).thenThrow(outOfDirectMemException);
+
+        ByteBufAllocator alloc = ByteBufAllocatorBuilder.create()
+                .pooledAllocator(baseAlloc)
+                .outOfMemoryPolicy(OutOfMemoryPolicy.ThrowException)
+                .exitOnOutOfMemory(true)
+                .build();
+
+        MockedStatic<ShutdownUtil> mockedStatic = mockStatic(ShutdownUtil.class);
+
+        try {
+            alloc.buffer();
+            fail("Should have thrown exception");
+        } catch (OutOfMemoryError e) {
+            // Expected
+            assertEquals(outOfDirectMemException, e);
+        }
+
+        mockedStatic.verify(() -> ShutdownUtil.triggerImmediateForcefulShutdown(), Mockito.times(1));
     }
 
     @Test
@@ -231,17 +258,17 @@ public class ByteBufAllocatorBuilderTest {
         ByteBuf buf1 = alloc.buffer();
         assertEquals(pooledAlloc, buf1.alloc());
         assertFalse(buf1.hasArray());
-        buf1.release();
+        ReferenceCountUtil.release(buf1);
 
         ByteBuf buf2 = alloc.directBuffer();
         assertEquals(pooledAlloc, buf2.alloc());
         assertFalse(buf2.hasArray());
-        buf2.release();
+        ReferenceCountUtil.release(buf2);
 
         ByteBuf buf3 = alloc.heapBuffer();
         assertEquals(pooledAlloc, buf3.alloc());
         assertTrue(buf3.hasArray());
-        buf3.release();
+        ReferenceCountUtil.release(buf3);
     }
 
     @Test
@@ -257,14 +284,14 @@ public class ByteBufAllocatorBuilderTest {
         assertEquals(PooledByteBufAllocator.class, buf1.alloc().getClass());
         assertEquals(3, ((PooledByteBufAllocator) buf1.alloc()).metric().numDirectArenas());
         assertFalse(buf1.hasArray());
-        buf1.release();
+        ReferenceCountUtil.release(buf1);
 
         ByteBuf buf2 = alloc.directBuffer();
         assertFalse(buf2.hasArray());
-        buf2.release();
+        ReferenceCountUtil.release(buf2);
 
         ByteBuf buf3 = alloc.heapBuffer();
         assertTrue(buf3.hasArray());
-        buf3.release();
+        ReferenceCountUtil.release(buf3);
     }
 }

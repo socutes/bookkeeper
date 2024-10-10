@@ -60,8 +60,14 @@ public class TestStatsProvider implements StatsProvider {
         }
 
         @Override
-        public void add(long delta) {
+        public void addCount(long delta) {
             updateMax(val.addAndGet(delta));
+        }
+
+        @Override
+        public void addLatency(long eventLatency, TimeUnit unit) {
+            long valueMillis = unit.toMillis(eventLatency);
+            updateMax(val.addAndGet(valueMillis));
         }
 
         @Override
@@ -146,6 +152,10 @@ public class TestStatsProvider implements StatsProvider {
         public synchronized long getSuccessCount() {
             return successCount;
         }
+
+        public synchronized long getFailureCount() {
+            return failureCount;
+        }
     }
 
     /**
@@ -197,6 +207,16 @@ public class TestStatsProvider implements StatsProvider {
 
         @Override
         public void removeScope(String name, StatsLogger statsLogger) {}
+
+        @Override
+        public OpStatsLogger getThreadScopedOpStatsLogger(String name) {
+            return getOpStatsLogger(name);
+        }
+
+        @Override
+        public Counter getThreadScopedCounter(String name) {
+            return getCounter(name);
+        }
     }
 
     @Override

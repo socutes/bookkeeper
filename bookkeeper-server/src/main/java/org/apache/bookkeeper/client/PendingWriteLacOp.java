@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,7 +19,6 @@ package org.apache.bookkeeper.client;
 
 import java.util.BitSet;
 import java.util.List;
-
 import org.apache.bookkeeper.client.AsyncCallback.AddLacCallback;
 import org.apache.bookkeeper.net.BookieId;
 import org.apache.bookkeeper.proto.BookkeeperInternalCallbacks.WriteLacCallback;
@@ -80,13 +79,9 @@ class PendingWriteLacOp implements WriteLacCallback {
 
     void initiate(ByteBufList toSend) {
         this.toSend = toSend;
-        DistributionSchedule.WriteSet writeSet = lh.distributionSchedule.getWriteSet(lac);
-        try {
-            for (int i = 0; i < writeSet.size(); i++) {
-                sendWriteLacRequest(writeSet.get(i));
-            }
-        } finally {
-            writeSet.recycle();
+
+        for (int i = 0; i < lh.distributionSchedule.getWriteQuorumSize(); i++) {
+            sendWriteLacRequest(lh.distributionSchedule.getWriteSetBookieIndex(lac, i));
         }
     }
 

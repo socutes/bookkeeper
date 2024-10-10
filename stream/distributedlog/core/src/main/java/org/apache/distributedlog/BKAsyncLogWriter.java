@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -98,9 +98,9 @@ class BKAsyncLogWriter extends BKAbstractLogWriter implements AsyncLogWriter {
     }
 
     /**
-     * Last pending record in current log segment. After it is satisified, it would
+     * Last pending record in current log segment. After it is satisfied, it would
      * roll log segment.
-     * This implementation is based on the assumption that all future satisified in same
+     * This implementation is based on the assumption that all future satisfied in same
      * order future pool.
      */
     class LastPendingLogRecord extends PendingLogRecord {
@@ -367,7 +367,7 @@ class BKAsyncLogWriter extends BKAbstractLogWriter implements AsyncLogWriter {
                             FutureUtils.complete(rollingFuture, writer);
                         }
                         rollingFuture = null;
-                        pendingRequestDispatch.add(pendingRequests.size());
+                        pendingRequestDispatch.addCount(pendingRequests.size());
                         pendingRequests = null;
                     }
                 } catch (IOException ioe) {
@@ -395,7 +395,7 @@ class BKAsyncLogWriter extends BKAbstractLogWriter implements AsyncLogWriter {
             rollingFuture = null;
         }
 
-        pendingRequestDispatch.add(pendingRequestsSnapshot.size());
+        pendingRequestDispatch.addCount(pendingRequestsSnapshot.size());
 
         // After erroring out the writer above, no more requests
         // will be enqueued to pendingRequests

@@ -18,13 +18,10 @@
 package org.apache.bookkeeper.tests.backwardcompat
 
 import com.github.dockerjava.api.DockerClient
-
 import org.apache.bookkeeper.tests.integration.utils.BookKeeperClusterUtils
 import org.apache.bookkeeper.tests.integration.utils.MavenClassLoader
-
 import org.jboss.arquillian.junit.Arquillian
 import org.jboss.arquillian.test.api.ArquillianResource
-
 import org.junit.Assert
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -36,6 +33,12 @@ class TestCompatUpgradeDirect {
     private static final Logger LOG = LoggerFactory.getLogger(TestCompatUpgradeDirect.class)
     private static byte[] PASSWD = "foobar".getBytes()
 
+    static {
+        Thread.setDefaultUncaughtExceptionHandler { Thread t, Throwable e ->
+            LOG.error("Uncaught exception in thread {}", t, e)
+        }
+    }
+
     @ArquillianResource
     DockerClient docker
 
@@ -43,7 +46,7 @@ class TestCompatUpgradeDirect {
     public void test0_upgradeDirect410toCurrent() throws Exception {
         BookKeeperClusterUtils.legacyMetadataFormat(docker)
         String zookeeper = BookKeeperClusterUtils.zookeeperConnectString(docker)
-        String currentVersion = System.getProperty("currentVersion")
+        String currentVersion = BookKeeperClusterUtils.CURRENT_VERSION
         int numEntries = 10
 
         Assert.assertTrue(BookKeeperClusterUtils.startAllBookiesWithVersion(docker, "4.1.0"))
@@ -94,7 +97,7 @@ class TestCompatUpgradeDirect {
 
     @Test
     public void test9_v410ClientCantFenceLedgerFromCurrent() throws Exception {
-        String currentVersion = System.getProperty("currentVersion")
+        String currentVersion = BookKeeperClusterUtils.CURRENT_VERSION
         String zookeeper = BookKeeperClusterUtils.zookeeperConnectString(docker)
 
         def currentCL = MavenClassLoader.forBookKeeperVersion(currentVersion)

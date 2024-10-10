@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -34,7 +34,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-
 import org.apache.bookkeeper.common.concurrent.FutureEventListener;
 import org.apache.bookkeeper.common.concurrent.FutureUtils;
 import org.apache.bookkeeper.common.util.OrderedScheduler;
@@ -398,7 +397,7 @@ class ReadAheadEntryReader implements
         return isInitialized;
     }
 
-    private void orderedSubmit(SafeRunnable runnable) {
+    private void orderedSubmit(Runnable runnable) {
         synchronized (this) {
             if (null != closePromise) {
                 return;
@@ -608,7 +607,7 @@ class ReadAheadEntryReader implements
 
         if (cause instanceof EndOfLogSegmentException) {
             // we reach end of the log segment
-            moveToNextLogSegment();
+            moveToNextLogSegment(currentSegmentReader);
             return;
         }
         if (cause instanceof IOException) {
@@ -906,11 +905,15 @@ class ReadAheadEntryReader implements
         return true;
     }
 
-    void moveToNextLogSegment() {
+    void moveToNextLogSegment(final SegmentReader prevSegmentReader) {
         orderedSubmit(new CloseableRunnable() {
             @Override
             public void safeRun() {
-                unsafeMoveToNextLogSegment();
+                // Do not move forward if previous enqueued runnable
+                // already moved the segment forward.
+                if (prevSegmentReader == currentSegmentReader) {
+                    unsafeMoveToNextLogSegment();
+                }
             }
         });
     }
@@ -1009,6 +1012,9 @@ class ReadAheadEntryReader implements
     @Override
     public void onSegmentsUpdated(List<LogSegmentMetadata> segments) {
         if (!started.get()) {
+            return;
+        }
+        if (segments == null || segments.isEmpty()) {
             return;
         }
         logger.info("segments is updated with {}", segments);

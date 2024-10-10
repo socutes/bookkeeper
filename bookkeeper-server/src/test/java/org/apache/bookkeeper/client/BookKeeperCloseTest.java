@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -25,9 +25,7 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import com.google.common.util.concurrent.SettableFuture;
-
 import io.netty.buffer.ByteBuf;
-
 import java.io.IOException;
 import java.util.Enumeration;
 import java.util.Set;
@@ -35,10 +33,9 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
-
 import org.apache.bookkeeper.bookie.Bookie;
 import org.apache.bookkeeper.bookie.BookieException;
-import org.apache.bookkeeper.bookie.BookieImpl;
+import org.apache.bookkeeper.bookie.TestBookieImpl;
 import org.apache.bookkeeper.client.AsyncCallback.AddCallback;
 import org.apache.bookkeeper.client.AsyncCallback.CloseCallback;
 import org.apache.bookkeeper.client.AsyncCallback.CreateCallback;
@@ -76,7 +73,7 @@ public class BookKeeperCloseTest extends BookKeeperClusterTestCase {
     private void restartBookieSlow() throws Exception{
         ServerConfiguration conf = killBookie(0);
 
-        Bookie delayBookie = new BookieImpl(conf) {
+        Bookie delayBookie = new TestBookieImpl(conf) {
                 @Override
                 public void recoveryAddEntry(ByteBuf entry, WriteCallback cb,
                                              Object ctx, byte[] masterKey)
@@ -107,7 +104,7 @@ public class BookKeeperCloseTest extends BookKeeperClusterTestCase {
 
                 @Override
                 public ByteBuf readEntry(long ledgerId, long entryId)
-                        throws IOException, NoLedgerException {
+                        throws IOException, NoLedgerException, BookieException {
                     try {
                         Thread.sleep(5000);
                     } catch (InterruptedException ie) {
@@ -154,7 +151,7 @@ public class BookKeeperCloseTest extends BookKeeperClusterTestCase {
         // wait for creating the ledger
         assertTrue("create ledger call should have completed",
                 openLatch.await(20, TimeUnit.SECONDS));
-        assertEquals("Succesfully created ledger through closed bkclient!",
+        assertEquals("Successfully created ledger through closed bkclient!",
                 BKException.Code.ClientClosedException, returnCode.get());
     }
 
@@ -472,7 +469,7 @@ public class BookKeeperCloseTest extends BookKeeperClusterTestCase {
     @Test
     public void testBookKeeperAdmin() throws Exception {
         BookKeeper bk = new BookKeeper(baseClientConf, zkc);
-        try (BookKeeperAdmin bkadmin = new BookKeeperAdmin(bk)) {
+        try (BookKeeperAdmin bkadmin = new BookKeeperAdmin(bk, baseClientConf)) {
 
             LOG.info("Create ledger and add entries to it");
             LedgerHandle lh1 = createLedgerWithEntries(bk, 100);

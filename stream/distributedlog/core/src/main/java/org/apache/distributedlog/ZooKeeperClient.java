@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -212,7 +212,7 @@ public class ZooKeeperClient {
                     + name + " failed on establishing zookeeper connection", ioe);
         }
 
-        // This indicates that the client was explictly closed
+        // This indicates that the client was explicitly closed
         if (closed) {
             throw new ZooKeeperConnectionException("Client " + name + " has already been closed");
         }
@@ -393,7 +393,7 @@ public class ZooKeeperClient {
     }
 
     /**
-     * Closes the the underlying zookeeper instance.
+     * Closes the underlying zookeeper instance.
      * Subsequent attempts to {@link #get} will fail
      */
     public synchronized void close() {

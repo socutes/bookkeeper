@@ -25,6 +25,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -39,17 +40,16 @@ import dlshade.org.apache.bookkeeper.meta.LayoutManager;
 import dlshade.org.apache.bookkeeper.meta.LedgerLayout;
 import dlshade.org.apache.bookkeeper.meta.LedgerManagerFactory;
 import java.io.IOException;
+import lombok.Cleanup;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.powermock.api.mockito.PowerMockito;
-import org.powermock.core.classloader.annotations.PrepareForTest;
-import org.powermock.modules.junit4.PowerMockRunner;
+import org.mockito.MockedStatic;
+import org.mockito.junit.MockitoJUnitRunner;
 
 /**
  * Test whether the distributedlog-core-shaded jar is generated correctly.
  */
-@RunWith(PowerMockRunner.class)
-@PrepareForTest({ AbstractZkLedgerManagerFactory.class, ReflectionUtils.class })
+@RunWith(MockitoJUnitRunner.class)
 public class DistributedLogCoreShadedJarTest {
 
     @Test(expected = ClassNotFoundException.class)
@@ -119,19 +119,19 @@ public class DistributedLogCoreShadedJarTest {
 
     @Test
     public void testDistributedLogCommon() throws Exception {
-        Class.forName("org.apache.distributedlog.common.concurrent.AsyncSemaphore");
+        Class.forName("dlshade.org.apache.distributedlog.common.concurrent.AsyncSemaphore");
         assertTrue(true);
     }
 
     @Test
     public void testDistributedLogProto() throws Exception {
-        Class.forName("org.apache.distributedlog.DLSN");
+        Class.forName("dlshade.org.apache.distributedlog.DLSN");
         assertTrue(true);
     }
 
     @Test
     public void testDistributedLogCore() throws Exception {
-        Class.forName("org.apache.distributedlog.api.AsyncLogReader");
+        Class.forName("dlshade.org.apache.distributedlog.api.AsyncLogReader");
         assertTrue(true);
     }
 
@@ -181,9 +181,10 @@ public class DistributedLogCoreShadedJarTest {
         LedgerManagerFactory factory = mock(LedgerManagerFactory.class);
         when(factory.initialize(any(AbstractConfiguration.class), same(manager), anyInt()))
             .thenReturn(factory);
-        PowerMockito.mockStatic(ReflectionUtils.class);
-        when(ReflectionUtils.newInstance(any(Class.class)))
-            .thenReturn(factory);
+
+        @Cleanup
+        MockedStatic<ReflectionUtils> reflectionUtilsMockedStatic = mockStatic(ReflectionUtils.class);
+        reflectionUtilsMockedStatic.when(()-> ReflectionUtils.newInstance(any(Class.class))).thenReturn(factory);
 
         try {
             LedgerManagerFactory result = AbstractZkLedgerManagerFactory.newLedgerManagerFactory(

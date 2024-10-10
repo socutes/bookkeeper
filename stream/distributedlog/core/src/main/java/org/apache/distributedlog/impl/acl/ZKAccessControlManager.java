@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -185,7 +185,7 @@ public class ZKAccessControlManager implements AccessControlManager, Watcher {
                                     @Override
                                     public void onSuccess(ZKAccessControl accessControl) {
                                         streamEntries.put(streamName, accessControl);
-                                        logger.info("Added overrided access control for stream {} : {}",
+                                        logger.info("Added override access control for stream {} : {}",
                                                 streamName, accessControl.getAccessControlEntry());
                                         complete();
                                     }

@@ -25,7 +25,6 @@ import static org.junit.Assert.fail;
 
 import io.netty.channel.Channel;
 import io.netty.channel.local.LocalChannel;
-
 import org.apache.bookkeeper.client.BookKeeper;
 import org.apache.bookkeeper.client.BookKeeper.DigestType;
 import org.apache.bookkeeper.client.LedgerHandle;
@@ -34,7 +33,7 @@ import org.apache.bookkeeper.test.BookKeeperClusterTestCase;
 import org.junit.Test;
 
 /**
- * Tests of the main BookKeeper client using networkless comunication.
+ * Tests of the main BookKeeper client using networkless communication.
  */
 public class NetworkLessBookieTest extends BookKeeperClusterTestCase {
 

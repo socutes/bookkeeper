@@ -84,8 +84,8 @@ public class MockBookies {
         DigestManager digestManager = DigestManager.instantiate(ledgerId, new byte[0],
                 DataFormats.LedgerMetadataFormat.DigestType.CRC32C,
                 UnpooledByteBufAllocator.DEFAULT, false);
-        return ByteBufList.coalesce(digestManager.computeDigestAndPackageForSending(
-                entryId, lac, 0, Unpooled.buffer(10)));
+        return ByteBufList.coalesce((ByteBufList) digestManager.computeDigestAndPackageForSending(
+                entryId, lac, 0, Unpooled.buffer(10), new byte[20], 0));
 
     }
 
@@ -121,6 +121,40 @@ public class MockBookies {
         }
 
         return entry;
+    }
+
+    public ByteBufList batchReadEntries(BookieId bookieId, int flags, long ledgerId, long startEntryId,
+            int maxCount, long maxSize) throws BKException {
+        MockLedgerData ledger = getBookieData(bookieId).get(ledgerId);
+
+        if (ledger == null) {
+            LOG.warn("[{};L{}] ledger not found", bookieId, ledgerId);
+            throw new BKException.BKNoSuchLedgerExistsException();
+        }
+
+        if ((flags & BookieProtocol.FLAG_DO_FENCING) == BookieProtocol.FLAG_DO_FENCING) {
+            ledger.fence();
+        }
+        //Refer: BatchedReadEntryProcessor.readData
+        ByteBufList data = null;
+        if (maxCount <= 0) {
+            maxCount = Integer.MAX_VALUE;
+        }
+        long frameSize = 24 + 8 + 4;
+        for (long i = startEntryId; i < startEntryId + maxCount; i++) {
+             ByteBuf entry = ledger.getEntry(i);
+             frameSize += entry.readableBytes() + 4;
+             if (data == null) {
+                 data = ByteBufList.get(entry);
+             } else {
+                 if (frameSize > maxSize) {
+                     entry.release();
+                     break;
+                 }
+                 data.add(entry);
+             }
+        }
+        return data;
     }
 
     public ConcurrentHashMap<Long, MockLedgerData> getBookieData(BookieId bookieId) {

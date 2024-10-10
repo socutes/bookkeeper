@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -27,6 +27,8 @@ import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 
 import java.io.File;
 import java.io.IOException;
@@ -52,15 +54,13 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.powermock.api.mockito.PowerMockito;
-import org.powermock.core.classloader.annotations.PrepareForTest;
-import org.powermock.modules.junit4.PowerMockRunner;
+import org.mockito.MockedStatic;
+import org.mockito.junit.MockitoJUnitRunner;
 
 /**
  * Test LedgerDirsManager.
  */
-@RunWith(PowerMockRunner.class)
-@PrepareForTest(LedgerDirsMonitor.class)
+@RunWith(MockitoJUnitRunner.class)
 public class LedgerDirsManagerTest {
 
     ServerConfiguration conf;
@@ -79,6 +79,7 @@ public class LedgerDirsManagerTest {
     // Thread used by monitor
     ScheduledExecutorService executor;
     MockExecutorController executorController;
+    MockedStatic<Executors> executorsMockedStatic;
 
     File createTempDir(String prefix, String suffix) throws IOException {
         File dir = IOUtils.createTempDir(prefix, suffix);
@@ -88,7 +89,7 @@ public class LedgerDirsManagerTest {
 
     @Before
     public void setUp() throws Exception {
-        PowerMockito.mockStatic(Executors.class);
+        executorsMockedStatic = mockStatic(Executors.class);
 
         File tmpDir = createTempDir("bkTest", ".dir");
         curDir = BookieImpl.getCurrentDirectory(tmpDir);
@@ -101,11 +102,10 @@ public class LedgerDirsManagerTest {
         conf.setIsForceGCAllowWhenNoSpace(true);
         conf.setMinUsableSizeForEntryLogCreation(Long.MIN_VALUE);
 
-        executor = PowerMockito.mock(ScheduledExecutorService.class);
+        executor = mock(ScheduledExecutorService.class);
         executorController = new MockExecutorController()
             .controlScheduleAtFixedRate(executor, 10);
-        PowerMockito.when(Executors.newSingleThreadScheduledExecutor(any()))
-            .thenReturn(executor);
+        executorsMockedStatic.when(()->Executors.newSingleThreadScheduledExecutor(any())).thenReturn(executor);
 
         mockDiskChecker = new MockDiskChecker(threshold, warnThreshold);
         statsProvider = new TestStatsProvider();
@@ -119,6 +119,7 @@ public class LedgerDirsManagerTest {
 
     @After
     public void tearDown() throws Exception {
+        executorsMockedStatic.close();
         ledgerMonitor.shutdown();
         for (File dir : tempDirs) {
             FileUtils.deleteDirectory(dir);
@@ -238,6 +239,76 @@ public class LedgerDirsManagerTest {
 
         assertFalse(mockLedgerDirsListener.readOnly);
         assertTrue(mockLedgerDirsListener.highPriorityWritesAllowed);
+    }
+
+    @Test
+    public void testIsReadOnlyModeOnAnyDiskFullEnabled() throws Exception {
+        testAnyLedgerFullTransitToReadOnly(true);
+        testAnyLedgerFullTransitToReadOnly(false);
+    }
+
+    public void testAnyLedgerFullTransitToReadOnly(boolean isReadOnlyModeOnAnyDiskFullEnabled) throws Exception {
+        ledgerMonitor.shutdown();
+
+        final float nospace = 0.90f;
+        final float lwm = 0.80f;
+        HashMap<File, Float> usageMap;
+
+        File tmpDir1 = createTempDir("bkTest", ".dir");
+        File curDir1 = BookieImpl.getCurrentDirectory(tmpDir1);
+        BookieImpl.checkDirectoryStructure(curDir1);
+
+        File tmpDir2 = createTempDir("bkTest", ".dir");
+        File curDir2 = BookieImpl.getCurrentDirectory(tmpDir2);
+        BookieImpl.checkDirectoryStructure(curDir2);
+
+        conf.setDiskUsageThreshold(nospace);
+        conf.setDiskLowWaterMarkUsageThreshold(lwm);
+        conf.setDiskUsageWarnThreshold(nospace);
+        conf.setReadOnlyModeOnAnyDiskFullEnabled(isReadOnlyModeOnAnyDiskFullEnabled);
+        conf.setLedgerDirNames(new String[] { tmpDir1.toString(), tmpDir2.toString() });
+
+        mockDiskChecker = new MockDiskChecker(nospace, warnThreshold);
+        dirsManager = new LedgerDirsManager(conf, conf.getLedgerDirs(),
+            new DiskChecker(conf.getDiskUsageThreshold(), conf.getDiskUsageWarnThreshold()), statsLogger);
+        ledgerMonitor = new LedgerDirsMonitor(conf, mockDiskChecker, Collections.singletonList(dirsManager));
+        usageMap = new HashMap<>();
+        usageMap.put(curDir1, 0.1f);
+        usageMap.put(curDir2, 0.1f);
+        mockDiskChecker.setUsageMap(usageMap);
+        ledgerMonitor.init();
+        final MockLedgerDirsListener mockLedgerDirsListener = new MockLedgerDirsListener();
+        dirsManager.addLedgerDirsListener(mockLedgerDirsListener);
+        ledgerMonitor.start();
+
+        Thread.sleep((diskCheckInterval * 2) + 100);
+        assertFalse(mockLedgerDirsListener.readOnly);
+
+        if (isReadOnlyModeOnAnyDiskFullEnabled) {
+            setUsageAndThenVerify(curDir1, 0.1f, curDir2, nospace + 0.05f, mockDiskChecker,
+                mockLedgerDirsListener, true);
+            setUsageAndThenVerify(curDir1, nospace + 0.05f, curDir2, 0.1f, mockDiskChecker,
+                mockLedgerDirsListener, true);
+            setUsageAndThenVerify(curDir1, nospace + 0.05f, curDir2, nospace + 0.05f, mockDiskChecker,
+                mockLedgerDirsListener, true);
+            setUsageAndThenVerify(curDir1, nospace - 0.30f, curDir2, nospace + 0.05f, mockDiskChecker,
+                mockLedgerDirsListener, true);
+            setUsageAndThenVerify(curDir1, nospace - 0.20f, curDir2, nospace - 0.20f, mockDiskChecker,
+                mockLedgerDirsListener, false);
+        } else {
+            setUsageAndThenVerify(curDir1, 0.1f, curDir2, 0.1f, mockDiskChecker,
+                mockLedgerDirsListener, false);
+            setUsageAndThenVerify(curDir1, 0.1f, curDir2, nospace + 0.05f, mockDiskChecker,
+                mockLedgerDirsListener, false);
+            setUsageAndThenVerify(curDir1, nospace + 0.05f, curDir2, 0.1f, mockDiskChecker,
+                mockLedgerDirsListener, false);
+            setUsageAndThenVerify(curDir1, nospace + 0.05f, curDir2, nospace + 0.05f, mockDiskChecker,
+                mockLedgerDirsListener, true);
+            setUsageAndThenVerify(curDir1, nospace - 0.30f, curDir2, nospace + 0.05f, mockDiskChecker,
+                mockLedgerDirsListener, false);
+            setUsageAndThenVerify(curDir1, nospace - 0.20f, curDir2, nospace - 0.20f, mockDiskChecker,
+                mockLedgerDirsListener, false);
+        }
     }
 
     @Test
@@ -428,6 +499,35 @@ public class LedgerDirsManagerTest {
         verifyUsage(curDir1, nospace + 0.05f, curDir2, nospace + 0.05f, mockLedgerDirsListener, true);
     }
 
+    @Test
+    public void testValidateLwmThreshold() {
+        final ServerConfiguration configuration = TestBKConfiguration.newServerConfiguration();
+        // check failed because diskSpaceThreshold < diskSpaceLwmThreshold
+        configuration.setDiskUsageThreshold(0.65f);
+        configuration.setDiskLowWaterMarkUsageThreshold(0.90f);
+        try {
+            new LedgerDirsMonitor(configuration, mockDiskChecker, Collections.singletonList(dirsManager));
+            fail("diskSpaceThreshold < diskSpaceLwmThreshold, should be failed.");
+        } catch (Exception e) {
+            assertTrue(e.getMessage().contains("diskSpaceThreshold >= diskSpaceLwmThreshold"));
+        }
+
+        // check failed because diskSpaceThreshold = 0 and diskUsageLwmThreshold = 1
+        configuration.setDiskUsageThreshold(0f);
+        configuration.setDiskLowWaterMarkUsageThreshold(1f);
+        try {
+            new LedgerDirsMonitor(configuration, mockDiskChecker, Collections.singletonList(dirsManager));
+            fail("diskSpaceThreshold = 0 and diskUsageLwmThreshold = 1, should be failed.");
+        } catch (Exception e) {
+            assertTrue(e.getMessage().contains("Should be > 0 and < 1"));
+        }
+
+        // check succeeded
+        configuration.setDiskUsageThreshold(0.95f);
+        configuration.setDiskLowWaterMarkUsageThreshold(0.90f);
+        new LedgerDirsMonitor(configuration, mockDiskChecker, Collections.singletonList(dirsManager));
+    }
+
     private void setUsageAndThenVerify(File dir1, float dir1Usage, File dir2, float dir2Usage,
             MockDiskChecker mockDiskChecker, MockLedgerDirsListener mockLedgerDirsListener, boolean verifyReadOnly)
             throws InterruptedException {
@@ -517,12 +617,18 @@ public class LedgerDirsManagerTest {
 
         @Override
         public void diskWritable(File disk) {
+            if (conf.isReadOnlyModeOnAnyDiskFullEnabled()) {
+                return;
+            }
             readOnly = false;
             highPriorityWritesAllowed = true;
         }
 
         @Override
         public void diskJustWritable(File disk) {
+            if (conf.isReadOnlyModeOnAnyDiskFullEnabled()) {
+                return;
+            }
             readOnly = false;
             highPriorityWritesAllowed = true;
         }
@@ -531,6 +637,20 @@ public class LedgerDirsManagerTest {
         public void allDisksFull(boolean highPriorityWritesAllowed) {
             this.readOnly = true;
             this.highPriorityWritesAllowed = highPriorityWritesAllowed;
+        }
+
+        @Override
+        public void anyDiskFull(boolean highPriorityWritesAllowed) {
+            if (conf.isReadOnlyModeOnAnyDiskFullEnabled()) {
+                this.readOnly = true;
+                this.highPriorityWritesAllowed = highPriorityWritesAllowed;
+            }
+        }
+
+        @Override
+        public void allDisksWritable() {
+            this.readOnly = false;
+            this.highPriorityWritesAllowed = true;
         }
 
         public void reset() {

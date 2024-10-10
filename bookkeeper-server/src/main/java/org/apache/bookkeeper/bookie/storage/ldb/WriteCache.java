@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -25,12 +25,11 @@ import static com.google.common.base.Preconditions.checkArgument;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.buffer.Unpooled;
-
 import java.io.Closeable;
+import java.io.IOException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.ReentrantLock;
-
 import org.apache.bookkeeper.common.util.MathUtils;
 import org.apache.bookkeeper.util.collections.ConcurrentLongHashSet;
 import org.apache.bookkeeper.util.collections.ConcurrentLongLongHashMap;
@@ -57,14 +56,18 @@ public class WriteCache implements Closeable {
      * Consumer that is used to scan the entire write cache.
      */
     public interface EntryConsumer {
-        void accept(long ledgerId, long entryId, ByteBuf entry);
+        void accept(long ledgerId, long entryId, ByteBuf entry) throws IOException;
     }
 
-    private final ConcurrentLongLongPairHashMap index =
-            new ConcurrentLongLongPairHashMap(4096, 2 * Runtime.getRuntime().availableProcessors());
+    private final ConcurrentLongLongPairHashMap index = ConcurrentLongLongPairHashMap.newBuilder()
+            .expectedItems(4096)
+            .concurrencyLevel(2 * Runtime.getRuntime().availableProcessors())
+            .build();
 
-    private final ConcurrentLongLongHashMap lastEntryMap =
-            new ConcurrentLongLongHashMap(4096, 2 * Runtime.getRuntime().availableProcessors());
+    private final ConcurrentLongLongHashMap lastEntryMap = ConcurrentLongLongHashMap.newBuilder()
+            .expectedItems(4096)
+            .concurrencyLevel(2 * Runtime.getRuntime().availableProcessors())
+            .build();
 
     private final ByteBuf[] cacheSegments;
     private final int segmentsCount;
@@ -78,7 +81,7 @@ public class WriteCache implements Closeable {
     private final AtomicLong cacheOffset = new AtomicLong(0);
     private final LongAdder cacheCount = new LongAdder();
 
-    private final ConcurrentLongHashSet deletedLedgers = new ConcurrentLongHashSet();
+    private final ConcurrentLongHashSet deletedLedgers = ConcurrentLongHashSet.newBuilder().build();
 
     private final ByteBufAllocator allocator;
 
@@ -196,6 +199,10 @@ public class WriteCache implements Closeable {
         return entry;
     }
 
+    public boolean hasEntry(long ledgerId, long entryId) {
+        return index.get(ledgerId, entryId) != null;
+    }
+
     public ByteBuf getLastEntry(long ledgerId) {
         long lastEntryId = lastEntryMap.get(ledgerId);
         if (lastEntryId == -1) {
@@ -210,9 +217,7 @@ public class WriteCache implements Closeable {
         deletedLedgers.add(ledgerId);
     }
 
-    private static final ArrayGroupSort groupSorter = new ArrayGroupSort(2, 4);
-
-    public void forEach(EntryConsumer consumer) {
+    public void forEach(EntryConsumer consumer) throws IOException {
         sortedEntriesLock.lock();
 
         try {
@@ -244,7 +249,7 @@ public class WriteCache implements Closeable {
             startTime = MathUtils.nowInNano();
 
             // Sort entries by (ledgerId, entryId) maintaining the 4 items groups
-            groupSorter.sort(sortedEntries, 0, sortedEntriesIdx);
+            ArrayGroupSort.sort(sortedEntries, 0, sortedEntriesIdx);
             if (log.isDebugEnabled()) {
                 log.debug("sorting {} ms", (MathUtils.elapsedNanos(startTime) / 1e6));
             }

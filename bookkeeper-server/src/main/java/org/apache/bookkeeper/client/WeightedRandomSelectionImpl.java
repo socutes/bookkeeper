@@ -28,7 +28,6 @@ import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,7 +37,7 @@ class WeightedRandomSelectionImpl<T> implements WeightedRandomSelection<T> {
     Double randomMax;
     int maxProbabilityMultiplier;
     Map<T, WeightedObject> map;
-    TreeMap<Double, T> cummulativeMap = new TreeMap<Double, T>();
+    TreeMap<Double, T> cumulativeMap = new TreeMap<Double, T>();
     ReadWriteLock rwLock = new ReentrantReadWriteLock(true);
 
     WeightedRandomSelectionImpl() {
@@ -121,10 +120,10 @@ class WeightedRandomSelectionImpl<T> implements WeightedRandomSelection<T> {
         // The probability of picking a bookie randomly is defaultPickProbability
         // but we change that priority by looking at the weight that each bookie
         // carries.
-        TreeMap<Double, T> tmpCummulativeMap = new TreeMap<Double, T>();
+        TreeMap<Double, T> tmpCumulativeMap = new TreeMap<Double, T>();
         Double key = 0.0;
         for (Map.Entry<T, Double> e : weightMap.entrySet()) {
-            tmpCummulativeMap.put(key, e.getKey());
+            tmpCumulativeMap.put(key, e.getKey());
             if (LOG.isDebugEnabled()) {
                 LOG.debug("Key: {} Value: {} AssignedKey: {} AssignedWeight: {}",
                         e.getKey(), e.getValue(), key, e.getValue());
@@ -135,7 +134,7 @@ class WeightedRandomSelectionImpl<T> implements WeightedRandomSelection<T> {
         rwLock.writeLock().lock();
         try {
             this.map = map;
-            cummulativeMap = tmpCummulativeMap;
+            cumulativeMap = tmpCumulativeMap;
             randomMax = key;
         } finally {
             rwLock.writeLock().unlock();
@@ -149,10 +148,8 @@ class WeightedRandomSelectionImpl<T> implements WeightedRandomSelection<T> {
             // pick a random number between 0 and randMax
             Double randomNum = randomMax * Math.random();
             // find the nearest key in the map corresponding to the randomNum
-            Double key = cummulativeMap.floorKey(randomNum);
-            //LOG.info("Random max: {} CummulativeMap size: {} selected key: {}", randomMax, cummulativeMap.size(),
-            //    key);
-            return cummulativeMap.get(key);
+            Double key = cumulativeMap.floorKey(randomNum);
+            return cumulativeMap.get(key);
         } finally {
             rwLock.readLock().unlock();
         }

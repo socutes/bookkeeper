@@ -25,6 +25,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+
 import com.google.common.collect.Sets;
 import com.google.common.io.ByteStreams;
 import com.google.common.io.MoreFiles;
@@ -714,7 +715,7 @@ public class RocksCheckpointerTest {
             fail("expected RuntimeException");
         } catch (RuntimeException se) {
             // noop
-            // in real life case ths is simply crash,
+            // in real life case this is simply crash,
             // so "finally" at the checkpoint() won't run either
         }
 

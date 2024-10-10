@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -80,6 +80,13 @@ public interface BookKeeper extends AutoCloseable {
      * @return a <code>CompletableFuture</code> instance containing ledger metadata.
      */
     CompletableFuture<LedgerMetadata> getLedgerMetadata(long ledgerId);
+
+    /**
+     * Return driver metadata service is available.
+     *
+     * @return the metadata service is available.
+     */
+    CompletableFuture<Boolean> isDriverMetadataServiceAvailable();
 
     /**
      * Close the client and release every resource.

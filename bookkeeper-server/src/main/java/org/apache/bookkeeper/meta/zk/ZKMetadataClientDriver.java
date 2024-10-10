@@ -18,11 +18,11 @@
  */
 package org.apache.bookkeeper.meta.zk;
 
+import com.google.common.annotations.VisibleForTesting;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledExecutorService;
-
 import lombok.extern.slf4j.Slf4j;
-
 import org.apache.bookkeeper.conf.ClientConfiguration;
 import org.apache.bookkeeper.discover.RegistrationClient;
 import org.apache.bookkeeper.discover.ZKRegistrationClient;
@@ -33,6 +33,7 @@ import org.apache.bookkeeper.stats.StatsLogger;
 import org.apache.bookkeeper.zookeeper.BoundExponentialBackoffRetryPolicy;
 import org.apache.zookeeper.Watcher.Event.EventType;
 import org.apache.zookeeper.Watcher.Event.KeeperState;
+import org.apache.zookeeper.ZooKeeper;
 
 /**
  * ZooKeeper based metadata client driver.
@@ -66,7 +67,7 @@ public class ZKMetadataClientDriver
             new BoundExponentialBackoffRetryPolicy(
                 conf.getZkTimeout(),
                 conf.getZkTimeout(),
-                0),
+                conf.getZkRetryBackoffMaxRetries()),
             optionalCtx);
         this.statsLogger = statsLogger;
         this.clientConf = conf;
@@ -78,13 +79,19 @@ public class ZKMetadataClientDriver
     @Override
     public synchronized RegistrationClient getRegistrationClient() {
         if (null == regClient) {
-            regClient = new ZKRegistrationClient(
-                zk,
-                ledgersRootPath,
-                scheduler,
-                bookieAddressTracking);
+            regClient = newZKRegistrationClient(
+                    zk,
+                    ledgersRootPath,
+                    scheduler,
+                    bookieAddressTracking);
         }
         return regClient;
+    }
+
+    @VisibleForTesting
+    ZKRegistrationClient newZKRegistrationClient(ZooKeeper zk, String ledgersRootPath,
+                                                 ScheduledExecutorService scheduler, boolean bookieAddressTracking) {
+        return new ZKRegistrationClient(zk, ledgersRootPath, scheduler, bookieAddressTracking);
     }
 
     @Override
@@ -104,5 +111,9 @@ public class ZKMetadataClientDriver
                 sessionStateListener.onSessionExpired();
             }
         });
+    }
+
+    public CompletableFuture<Boolean> isMetadataServiceAvailable() {
+        return CompletableFuture.completedFuture(metadataServiceAvailable);
     }
 }

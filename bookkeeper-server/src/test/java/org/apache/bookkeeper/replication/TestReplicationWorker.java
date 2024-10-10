@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,33 +19,52 @@
  */
 package org.apache.bookkeeper.replication;
 
+import static org.apache.bookkeeper.replication.ReplicationStats.AUDITOR_SCOPE;
 import static org.apache.bookkeeper.replication.ReplicationStats.NUM_ENTRIES_UNABLE_TO_READ_FOR_REPLICATION;
+import static org.apache.bookkeeper.replication.ReplicationStats.REPLICATION_SCOPE;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import io.netty.util.HashedWheelTimer;
 import java.io.IOException;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.net.URI;
+import java.net.UnknownHostException;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.Map.Entry;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.TimerTask;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-
+import java.util.function.BiConsumer;
+import java.util.stream.Collectors;
 import lombok.Cleanup;
-
+import org.apache.bookkeeper.bookie.BookieImpl;
 import org.apache.bookkeeper.client.BKException;
 import org.apache.bookkeeper.client.BookKeeper;
+import org.apache.bookkeeper.client.BookKeeperTestClient;
 import org.apache.bookkeeper.client.ClientUtil;
+import org.apache.bookkeeper.client.EnsemblePlacementPolicy;
 import org.apache.bookkeeper.client.LedgerEntry;
 import org.apache.bookkeeper.client.LedgerHandle;
+import org.apache.bookkeeper.client.RackawareEnsemblePlacementPolicy;
+import org.apache.bookkeeper.client.ZoneawareEnsemblePlacementPolicy;
+import org.apache.bookkeeper.client.api.LedgerMetadata;
 import org.apache.bookkeeper.common.util.OrderedScheduler;
+import org.apache.bookkeeper.conf.ClientConfiguration;
 import org.apache.bookkeeper.conf.ServerConfiguration;
+import org.apache.bookkeeper.feature.FeatureProvider;
 import org.apache.bookkeeper.meta.AbstractZkLedgerManager;
 import org.apache.bookkeeper.meta.LedgerManager;
 import org.apache.bookkeeper.meta.LedgerManagerFactory;
@@ -54,19 +73,26 @@ import org.apache.bookkeeper.meta.MetadataBookieDriver;
 import org.apache.bookkeeper.meta.MetadataClientDriver;
 import org.apache.bookkeeper.meta.MetadataDrivers;
 import org.apache.bookkeeper.meta.ZkLedgerUnderreplicationManager;
+import org.apache.bookkeeper.meta.exceptions.MetadataException;
 import org.apache.bookkeeper.meta.zk.ZKMetadataDriverBase;
 import org.apache.bookkeeper.net.BookieId;
+import org.apache.bookkeeper.net.DNSToSwitchMapping;
+import org.apache.bookkeeper.proto.BookieAddressResolver;
 import org.apache.bookkeeper.replication.ReplicationException.CompatibilityException;
 import org.apache.bookkeeper.stats.Counter;
+import org.apache.bookkeeper.stats.Gauge;
 import org.apache.bookkeeper.stats.NullStatsLogger;
 import org.apache.bookkeeper.stats.StatsLogger;
 import org.apache.bookkeeper.test.BookKeeperClusterTestCase;
 import org.apache.bookkeeper.test.TestStatsProvider;
 import org.apache.bookkeeper.test.TestStatsProvider.TestStatsLogger;
 import org.apache.bookkeeper.util.BookKeeperConstants;
+import org.apache.bookkeeper.util.StaticDNSResolver;
 import org.apache.bookkeeper.zookeeper.BoundExponentialBackoffRetryPolicy;
 import org.apache.bookkeeper.zookeeper.ZooKeeperClient;
 import org.apache.bookkeeper.zookeeper.ZooKeeperWatcherBase;
+import org.apache.commons.lang3.mutable.MutableObject;
+import org.apache.commons.lang3.reflect.FieldUtils;
 import org.apache.zookeeper.AsyncCallback.StatCallback;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.WatchedEvent;
@@ -75,6 +101,8 @@ import org.apache.zookeeper.Watcher.Event.EventType;
 import org.apache.zookeeper.Watcher.Event.KeeperState;
 import org.apache.zookeeper.ZooKeeper;
 import org.apache.zookeeper.ZooKeeper.States;
+import org.apache.zookeeper.data.Stat;
+import org.awaitility.Awaitility;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -103,13 +131,16 @@ public class TestReplicationWorker extends BookKeeperClusterTestCase {
     }
 
     TestReplicationWorker(String ledgerManagerFactory) {
-        super(3);
+        super(3, 300);
         LOG.info("Running test case using ledger manager : "
                 + ledgerManagerFactory);
         // set ledger manager name
         baseConf.setLedgerManagerFactoryClassName(ledgerManagerFactory);
         baseClientConf.setLedgerManagerFactoryClassName(ledgerManagerFactory);
         baseConf.setRereplicationEntryBatchSize(3);
+        baseConf.setZkTimeout(7000);
+        baseConf.setZkRetryBackoffMaxMs(500);
+        baseConf.setZkRetryBackoffStartMs(10);
     }
 
     @Override
@@ -133,7 +164,6 @@ public class TestReplicationWorker extends BookKeeperClusterTestCase {
             URI.create(baseConf.getMetadataServiceUri()));
         this.driver.initialize(
             baseConf,
-            () -> {},
             NullStatsLogger.INSTANCE);
         // initialize urReplicationManager
         mFactory = driver.getLedgerManagerFactory();
@@ -407,6 +437,69 @@ public class TestReplicationWorker extends BookKeeperClusterTestCase {
 
     }
 
+    @Test
+    public void testMultipleLedgerReplicationWithReplicationWorkerBatchRead() throws Exception {
+        LedgerHandle lh1 = bkc.createLedger(3, 3, BookKeeper.DigestType.CRC32, TESTPASSWD);
+        for (int i = 0; i < 200; ++i) {
+            lh1.addEntry(data);
+        }
+        BookieId replicaToKillFromFirstLedger = lh1.getLedgerMetadata().getAllEnsembles().get(0L).get(0);
+
+        LedgerHandle lh2 = bkc.createLedger(3, 3, BookKeeper.DigestType.CRC32, TESTPASSWD);
+        for (int i = 0; i < 200; ++i) {
+            lh2.addEntry(data);
+        }
+
+        BookieId replicaToKillFromSecondLedger = lh2.getLedgerMetadata().getAllEnsembles().get(0L).get(0);
+
+        LOG.info("Killing Bookie : {}", replicaToKillFromFirstLedger);
+        killBookie(replicaToKillFromFirstLedger);
+        lh1.close();
+
+        LOG.info("Killing Bookie : {}", replicaToKillFromSecondLedger);
+        killBookie(replicaToKillFromSecondLedger);
+        lh2.close();
+
+        BookieId newBkAddr = startNewBookieAndReturnBookieId();
+        LOG.info("New Bookie addr : {}", newBkAddr);
+
+        if (replicaToKillFromFirstLedger != replicaToKillFromSecondLedger) {
+            BookieId newBkAddr2 = startNewBookieAndReturnBookieId();
+            LOG.info("New Bookie addr : {}", newBkAddr2);
+        }
+
+        ClientConfiguration clientConfiguration = new ClientConfiguration(baseClientConf);
+        clientConfiguration.setUseV2WireProtocol(true);
+        clientConfiguration.setRecoveryBatchReadEnabled(true);
+        clientConfiguration.setBatchReadEnabled(true);
+        clientConfiguration.setRereplicationEntryBatchSize(100);
+        clientConfiguration.setReplicationRateByBytes(3 * 1024);
+        ReplicationWorker rw = new ReplicationWorker(new ServerConfiguration(clientConfiguration));
+
+        rw.start();
+        try {
+            // Mark ledger1 and ledger2 as underreplicated
+            underReplicationManager.markLedgerUnderreplicated(lh1.getId(), replicaToKillFromFirstLedger.toString());
+            underReplicationManager.markLedgerUnderreplicated(lh2.getId(), replicaToKillFromSecondLedger.toString());
+
+            while (ReplicationTestUtil.isLedgerInUnderReplication(zkc, lh1.getId(), basePath)) {
+                Thread.sleep(100);
+            }
+
+            while (ReplicationTestUtil.isLedgerInUnderReplication(zkc, lh2.getId(), basePath)) {
+                Thread.sleep(100);
+            }
+
+            killAllBookies(lh1, newBkAddr);
+
+            // Should be able to read the entries from 0-99
+            verifyRecoveredLedgers(lh1, 0, 199);
+            verifyRecoveredLedgers(lh2, 0, 199);
+        } finally {
+            rw.shutdown();
+        }
+    }
+
     /**
      * Tests that ReplicationWorker should fence the ledger and release ledger
      * lock after timeout. Then replication should happen normally.
@@ -595,9 +688,11 @@ public class TestReplicationWorker extends BookKeeperClusterTestCase {
             int rw1UnableToReadEntriesForReplication = rw1.unableToReadEntriesForReplication.get(lh.getId()).size();
             int rw2UnableToReadEntriesForReplication = rw2.unableToReadEntriesForReplication.get(lh.getId()).size();
             assertTrue(
-                    "unableToReadEntriesForReplication in RW1: " + rw1UnableToReadEntriesForReplication + " in RW2: "
+                    "unableToReadEntriesForReplication in RW1: " + rw1UnableToReadEntriesForReplication
+                            + " in RW2: "
                             + rw2UnableToReadEntriesForReplication,
-                    (rw1UnableToReadEntriesForReplication == 0) || (rw2UnableToReadEntriesForReplication == 0));
+                    (rw1UnableToReadEntriesForReplication == 0)
+                            || (rw2UnableToReadEntriesForReplication == 0));
         } finally {
             rw1.shutdown();
             rw2.shutdown();
@@ -610,7 +705,8 @@ public class TestReplicationWorker extends BookKeeperClusterTestCase {
 
         public InjectedReplicationWorker(ServerConfiguration conf, StatsLogger statsLogger,
                 CopyOnWriteArrayList<Long> delayReplicationPeriods)
-                throws CompatibilityException, KeeperException, InterruptedException, IOException {
+                throws CompatibilityException, ReplicationException.UnavailableException,
+                InterruptedException, IOException {
             super(conf, statsLogger);
             this.delayReplicationPeriods = delayReplicationPeriods;
         }
@@ -830,18 +926,63 @@ public class TestReplicationWorker extends BookKeeperClusterTestCase {
             assertTrue("Replication worker should be running", rw.isRunning());
 
             stopZKCluster();
-            // Wait for disconnection to be picked up
-            for (int i = 0; i < 10; i++) {
-                if (!zk.getState().isConnected()) {
-                    break;
-                }
-                Thread.sleep(1000);
-            }
-            assertFalse(zk.getState().isConnected());
+            // ZK is down for shorter period than reconnect timeout
+            Thread.sleep(1000);
             startZKCluster();
 
-            assertTrue("Replication worker should still be running", rw.isRunning());
+            assertTrue("Replication worker should not shutdown", rw.isRunning());
         }
+    }
+
+    /**
+     * Test that the replication worker shuts down on non-recoverable ZK connection loss.
+     */
+    @Test
+    public void testRWZKConnectionLostOnNonRecoverableZkError() throws Exception {
+        for (int j = 0; j < 3; j++) {
+            LedgerHandle lh = bkc.createLedger(1, 1, 1,
+                    BookKeeper.DigestType.CRC32, TESTPASSWD,
+                    null);
+            final long createdLedgerId = lh.getId();
+            for (int i = 0; i < 10; i++) {
+                lh.addEntry(data);
+            }
+            lh.close();
+        }
+
+        killBookie(2);
+        killBookie(1);
+        startNewBookie();
+        startNewBookie();
+
+        servers.get(0).getConfiguration().setRwRereplicateBackoffMs(100);
+        servers.get(0).startAutoRecovery();
+
+        Auditor auditor = getAuditor(10, TimeUnit.SECONDS);
+        ReplicationWorker rw = servers.get(0).getReplicationWorker();
+
+        ZkLedgerUnderreplicationManager ledgerUnderreplicationManager =
+                (ZkLedgerUnderreplicationManager) FieldUtils.readField(auditor,
+                        "ledgerUnderreplicationManager", true);
+
+        ZooKeeper zkc = (ZooKeeper) FieldUtils.readField(ledgerUnderreplicationManager, "zkc", true);
+        auditor.submitAuditTask().get();
+
+        assertTrue(zkc.getState().isConnected());
+        zkc.close();
+        assertFalse(zkc.getState().isConnected());
+
+        auditor.submitAuditTask();
+        rw.run();
+
+        for (int i = 0; i < 10; i++) {
+            if (!rw.isRunning() && !auditor.isRunning()) {
+                break;
+            }
+            Thread.sleep(1000);
+        }
+        assertFalse("Replication worker should NOT be running", rw.isRunning());
+        assertFalse("Auditor should NOT be running", auditor.isRunning());
     }
 
     private void killAllBookies(LedgerHandle lh, BookieId excludeBK)
@@ -962,7 +1103,7 @@ public class TestReplicationWorker extends BookKeeperClusterTestCase {
          * create MockZooKeeperClient instance and wait for it to be connected.
          */
         int zkSessionTimeOut = 10000;
-        ZooKeeperWatcherBase zooKeeperWatcherBase = new ZooKeeperWatcherBase(zkSessionTimeOut,
+        ZooKeeperWatcherBase zooKeeperWatcherBase = new ZooKeeperWatcherBase(zkSessionTimeOut, false,
                 NullStatsLogger.INSTANCE);
         MockZooKeeperClient zkFaultInjectionWrapper = new MockZooKeeperClient(zkUtil.getZooKeeperConnectString(),
                 zkSessionTimeOut, zooKeeperWatcherBase);
@@ -976,7 +1117,8 @@ public class TestReplicationWorker extends BookKeeperClusterTestCase {
          */
         BookKeeper bkWithMockZK = new BookKeeper(baseClientConf, zkFaultInjectionWrapper);
         long ledgerId = 567L;
-        LedgerHandle lh = bkWithMockZK.createLedgerAdv(ledgerId, 2, 2, 2, BookKeeper.DigestType.CRC32, TESTPASSWD,
+        LedgerHandle lh = bkWithMockZK.createLedgerAdv(ledgerId, 2, 2, 2,
+                BookKeeper.DigestType.CRC32, TESTPASSWD,
                 null);
         for (int i = 0; i < 10; i++) {
             lh.addEntry(i, data);
@@ -1007,7 +1149,7 @@ public class TestReplicationWorker extends BookKeeperClusterTestCase {
          * 2, we should be able to replicate to the other bookie.
          */
         BookieId replicaToKill = lh.getLedgerMetadata().getAllEnsembles().get(0L).get(0);
-        LOG.info("Killing Bookie", replicaToKill);
+        LOG.info("Killing Bookie id {}", replicaToKill);
         killBookie(replicaToKill);
 
         /*
@@ -1077,5 +1219,274 @@ public class TestReplicationWorker extends BookKeeperClusterTestCase {
             zkFaultInjectionWrapper.close();
             bkWithMockZK.close();
         }
+    }
+
+    @Test
+    public void testReplicateEmptyOpenStateLedger() throws Exception {
+        LedgerHandle lh = bkc.createLedger(3, 3, 2, BookKeeper.DigestType.CRC32, TESTPASSWD);
+        assertFalse(lh.getLedgerMetadata().isClosed());
+
+        List<BookieId> firstEnsemble = lh.getLedgerMetadata().getAllEnsembles().firstEntry().getValue();
+        List<BookieId> ensemble = lh.getLedgerMetadata().getAllEnsembles().entrySet().iterator().next().getValue();
+        killBookie(ensemble.get(1));
+
+        startNewBookie();
+        baseConf.setOpenLedgerRereplicationGracePeriod(String.valueOf(30));
+        ReplicationWorker replicationWorker = new ReplicationWorker(baseConf);
+        replicationWorker.start();
+
+        try {
+            underReplicationManager.markLedgerUnderreplicated(lh.getId(), ensemble.get(1).toString());
+            Awaitility.waitAtMost(60, TimeUnit.SECONDS).untilAsserted(() ->
+                assertFalse(ReplicationTestUtil.isLedgerInUnderReplication(zkc, lh.getId(), basePath))
+            );
+
+            LedgerHandle lh1 = bkc.openLedgerNoRecovery(lh.getId(), BookKeeper.DigestType.CRC32, TESTPASSWD);
+            assertTrue(lh1.getLedgerMetadata().isClosed());
+        } finally {
+            replicationWorker.shutdown();
+        }
+    }
+
+    @Test
+    public void testRepairedNotAdheringPlacementPolicyLedgerFragmentsOnRack() throws Exception {
+        testRepairedNotAdheringPlacementPolicyLedgerFragments(RackawareEnsemblePlacementPolicy.class, null);
+    }
+
+    @Test
+    public void testReplicationStats() throws Exception {
+        BiConsumer<Boolean, ReplicationWorker> checkReplicationStats = (first, rw) -> {
+            try {
+                final Method rereplicate = rw.getClass().getDeclaredMethod("rereplicate");
+                rereplicate.setAccessible(true);
+                final Object result = rereplicate.invoke(rw);
+                final Field statsLoggerField = rw.getClass().getDeclaredField("statsLogger");
+                statsLoggerField.setAccessible(true);
+                final TestStatsLogger statsLogger = (TestStatsLogger) statsLoggerField.get(rw);
+
+                final Counter numDeferLedgerLockReleaseOfFailedLedgerCounter =
+                        statsLogger.getCounter(ReplicationStats.NUM_DEFER_LEDGER_LOCK_RELEASE_OF_FAILED_LEDGER);
+                final Counter numLedgersReplicatedCounter =
+                        statsLogger.getCounter(ReplicationStats.NUM_FULL_OR_PARTIAL_LEDGERS_REPLICATED);
+                final Counter numNotAdheringPlacementLedgersCounter = statsLogger
+                        .getCounter(ReplicationStats.NUM_NOT_ADHERING_PLACEMENT_LEDGERS_REPLICATED);
+
+                assertEquals("NUM_DEFER_LEDGER_LOCK_RELEASE_OF_FAILED_LEDGER",
+                        1, numDeferLedgerLockReleaseOfFailedLedgerCounter.get().longValue());
+
+                if (first) {
+                    assertFalse((boolean) result);
+                    assertEquals("NUM_FULL_OR_PARTIAL_LEDGERS_REPLICATED",
+                            0, numLedgersReplicatedCounter.get().longValue());
+                    assertEquals("NUM_NOT_ADHERING_PLACEMENT_LEDGERS_REPLICATED",
+                            0, numNotAdheringPlacementLedgersCounter.get().longValue());
+
+                } else {
+                    assertTrue((boolean) result);
+                    assertEquals("NUM_FULL_OR_PARTIAL_LEDGERS_REPLICATED",
+                            1, numLedgersReplicatedCounter.get().longValue());
+                    assertEquals("NUM_NOT_ADHERING_PLACEMENT_LEDGERS_REPLICATED",
+                            1, numNotAdheringPlacementLedgersCounter.get().longValue());
+                }
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        };
+        testRepairedNotAdheringPlacementPolicyLedgerFragments(
+                RackawareEnsemblePlacementPolicy.class, checkReplicationStats);
+    }
+
+    private void testRepairedNotAdheringPlacementPolicyLedgerFragments(
+            Class<? extends EnsemblePlacementPolicy> placementPolicyClass,
+            BiConsumer<Boolean, ReplicationWorker> checkReplicationStats) throws Exception {
+        List<BookieId> firstThreeBookies = servers.stream().map(ele -> {
+            try {
+                return ele.getServer().getBookieId();
+            } catch (UnknownHostException e) {
+                return null;
+            }
+        }).filter(Objects::nonNull).collect(Collectors.toList());
+
+        baseClientConf.setProperty("reppDnsResolverClass", StaticDNSResolver.class.getName());
+        baseClientConf.setProperty("enforceStrictZoneawarePlacement", false);
+        bkc.close();
+        bkc = new BookKeeperTestClient(baseClientConf) {
+            @Override
+            protected EnsemblePlacementPolicy initializeEnsemblePlacementPolicy(ClientConfiguration conf,
+                    DNSToSwitchMapping dnsResolver, HashedWheelTimer timer, FeatureProvider featureProvider,
+                    StatsLogger statsLogger, BookieAddressResolver bookieAddressResolver) throws IOException {
+                EnsemblePlacementPolicy ensemblePlacementPolicy = null;
+                if (ZoneawareEnsemblePlacementPolicy.class == placementPolicyClass) {
+                    ensemblePlacementPolicy = buildZoneAwareEnsemblePlacementPolicy(firstThreeBookies);
+                } else if (RackawareEnsemblePlacementPolicy.class == placementPolicyClass) {
+                    ensemblePlacementPolicy = buildRackAwareEnsemblePlacementPolicy(firstThreeBookies);
+                }
+                ensemblePlacementPolicy.initialize(conf, Optional.ofNullable(dnsResolver), timer,
+                        featureProvider, statsLogger, bookieAddressResolver);
+                return ensemblePlacementPolicy;
+            }
+        };
+
+        //This ledger not adhering placement policy, the combine(0,1,2) rack is 1.
+        LedgerHandle lh = bkc.createLedger(3, 3, 3, BookKeeper.DigestType.CRC32, TESTPASSWD);
+
+        int entrySize = 10;
+        for (int i = 0; i < entrySize; i++) {
+            lh.addEntry(data);
+        }
+        lh.close();
+
+        int minNumRacksPerWriteQuorumConfValue = 2;
+
+        ServerConfiguration servConf = new ServerConfiguration(confByIndex(0));
+        servConf.setMinNumRacksPerWriteQuorum(minNumRacksPerWriteQuorumConfValue);
+        servConf.setProperty("reppDnsResolverClass", StaticDNSResolver.class.getName());
+        servConf.setAuditorPeriodicPlacementPolicyCheckInterval(1000);
+        servConf.setRepairedPlacementPolicyNotAdheringBookieEnable(true);
+
+        MutableObject<Auditor> auditorRef = new MutableObject<Auditor>();
+        try {
+            TestStatsLogger statsLogger = startAuditorAndWaitForPlacementPolicyCheck(servConf, auditorRef);
+            Gauge<? extends Number> ledgersNotAdheringToPlacementPolicyGuage = statsLogger
+                    .getGauge(ReplicationStats.NUM_LEDGERS_NOT_ADHERING_TO_PLACEMENT_POLICY);
+            assertEquals("NUM_LEDGERS_NOT_ADHERING_TO_PLACEMENT_POLICY guage value",
+                    1, ledgersNotAdheringToPlacementPolicyGuage.getSample());
+            Gauge<? extends Number> ledgersSoftlyAdheringToPlacementPolicyGuage = statsLogger
+                    .getGauge(ReplicationStats.NUM_LEDGERS_SOFTLY_ADHERING_TO_PLACEMENT_POLICY);
+            assertEquals("NUM_LEDGERS_SOFTLY_ADHERING_TO_PLACEMENT_POLICY guage value",
+                    0, ledgersSoftlyAdheringToPlacementPolicyGuage.getSample());
+        } finally {
+            Auditor auditor = auditorRef.getValue();
+            if (auditor != null) {
+                auditor.close();
+            }
+        }
+
+        Stat stat = bkc.getZkHandle()
+                .exists("/ledgers/underreplication/ledgers/0000/0000/0000/0000/urL0000000000", false);
+        assertNotNull(stat);
+
+        baseConf.setRepairedPlacementPolicyNotAdheringBookieEnable(true);
+        BookKeeper bookKeeper = new BookKeeperTestClient(baseClientConf) {
+            @Override
+            protected EnsemblePlacementPolicy initializeEnsemblePlacementPolicy(ClientConfiguration conf,
+                    DNSToSwitchMapping dnsResolver, HashedWheelTimer timer, FeatureProvider featureProvider,
+                    StatsLogger statsLogger, BookieAddressResolver bookieAddressResolver) throws IOException {
+                EnsemblePlacementPolicy ensemblePlacementPolicy = null;
+                if (ZoneawareEnsemblePlacementPolicy.class == placementPolicyClass) {
+                    ensemblePlacementPolicy = buildZoneAwareEnsemblePlacementPolicy(firstThreeBookies);
+                } else if (RackawareEnsemblePlacementPolicy.class == placementPolicyClass) {
+                    ensemblePlacementPolicy = buildRackAwareEnsemblePlacementPolicy(firstThreeBookies);
+                }
+                ensemblePlacementPolicy.initialize(conf, Optional.ofNullable(dnsResolver), timer,
+                        featureProvider, statsLogger, bookieAddressResolver);
+                return ensemblePlacementPolicy;
+            }
+        };
+        TestStatsProvider statsProvider = new TestStatsProvider();
+        TestStatsLogger statsLogger = statsProvider.getStatsLogger(REPLICATION_SCOPE);
+        ReplicationWorker rw = new ReplicationWorker(baseConf, bookKeeper, false, statsLogger);
+
+        if (checkReplicationStats != null) {
+            checkReplicationStats.accept(true, rw);
+        } else {
+            rw.start();
+        }
+
+        //start new bookie, the rack is /rack2
+        BookieId newBookieId = startNewBookieAndReturnBookieId();
+
+        if (checkReplicationStats != null) {
+            checkReplicationStats.accept(false, rw);
+        }
+
+        Awaitility.await().untilAsserted(() -> {
+            LedgerMetadata metadata = bkc.getLedgerManager().readLedgerMetadata(lh.getId()).get().getValue();
+            List<BookieId> newBookies = metadata.getAllEnsembles().get(0L);
+            assertTrue(newBookies.contains(newBookieId));
+        });
+
+        Awaitility.await().untilAsserted(() -> {
+            Stat stat1 = bkc.getZkHandle()
+                    .exists("/ledgers/underreplication/ledgers/0000/0000/0000/0000/urL0000000000", false);
+            assertNull(stat1);
+        });
+
+        for (BookieId rack1Book : firstThreeBookies) {
+            killBookie(rack1Book);
+        }
+
+        verifyRecoveredLedgers(lh, 0, entrySize - 1);
+
+        if (checkReplicationStats == null) {
+            rw.shutdown();
+        }
+        baseConf.setRepairedPlacementPolicyNotAdheringBookieEnable(false);
+        bookKeeper.close();
+    }
+
+    private EnsemblePlacementPolicy buildRackAwareEnsemblePlacementPolicy(List<BookieId> bookieIds) {
+        return new RackawareEnsemblePlacementPolicy() {
+            @Override
+            public String resolveNetworkLocation(BookieId addr) {
+                if (bookieIds.contains(addr)) {
+                    return "/rack1";
+                }
+                //The other bookie is /rack2
+                return "/rack2";
+            }
+        };
+    }
+
+    private EnsemblePlacementPolicy buildZoneAwareEnsemblePlacementPolicy(List<BookieId> firstThreeBookies) {
+        return new ZoneawareEnsemblePlacementPolicy() {
+            @Override
+            protected String resolveNetworkLocation(BookieId addr) {
+                //The first three bookie 1 is /zone1/ud1
+                //The first three bookie 2,3 is /zone1/ud2
+                if (firstThreeBookies.get(0).equals(addr)) {
+                    return "/zone1/ud1";
+                } else if (firstThreeBookies.contains(addr)) {
+                    return "/zone1/ud2";
+                }
+                //The other bookie is /zone2/ud1
+                return "/zone2/ud1";
+            }
+        };
+    }
+
+    private TestStatsLogger startAuditorAndWaitForPlacementPolicyCheck(ServerConfiguration servConf,
+            MutableObject<Auditor> auditorRef) throws MetadataException, CompatibilityException, KeeperException,
+            InterruptedException, ReplicationException.UnavailableException, UnknownHostException {
+        LedgerManagerFactory mFactory = driver.getLedgerManagerFactory();
+        LedgerUnderreplicationManager urm = mFactory.newLedgerUnderreplicationManager();
+        TestStatsProvider statsProvider = new TestStatsProvider();
+        TestStatsLogger statsLogger = statsProvider.getStatsLogger(AUDITOR_SCOPE);
+        TestStatsProvider.TestOpStatsLogger placementPolicyCheckStatsLogger =
+                (TestStatsProvider.TestOpStatsLogger) statsLogger
+                .getOpStatsLogger(ReplicationStats.PLACEMENT_POLICY_CHECK_TIME);
+
+        final AuditorPeriodicCheckTest.TestAuditor auditor = new AuditorPeriodicCheckTest.TestAuditor(
+                BookieImpl.getBookieId(servConf).toString(), servConf, bkc, false, statsLogger, null);
+        auditorRef.setValue(auditor);
+        CountDownLatch latch = auditor.getLatch();
+        assertEquals("PLACEMENT_POLICY_CHECK_TIME SuccessCount", 0,
+                placementPolicyCheckStatsLogger.getSuccessCount());
+        urm.setPlacementPolicyCheckCTime(-1);
+        auditor.start();
+        /*
+         * since placementPolicyCheckCTime is set to -1, placementPolicyCheck should be
+         * scheduled to run with no initialdelay
+         */
+        assertTrue("placementPolicyCheck should have executed", latch.await(20, TimeUnit.SECONDS));
+        for (int i = 0; i < 20; i++) {
+            Thread.sleep(100);
+            if (placementPolicyCheckStatsLogger.getSuccessCount() >= 1) {
+                break;
+            }
+        }
+        assertEquals("PLACEMENT_POLICY_CHECK_TIME SuccessCount", 1,
+                placementPolicyCheckStatsLogger.getSuccessCount());
+        return statsLogger;
     }
 }

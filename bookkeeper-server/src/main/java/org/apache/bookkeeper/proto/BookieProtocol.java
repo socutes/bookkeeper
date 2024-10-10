@@ -25,7 +25,7 @@ import io.netty.buffer.Unpooled;
 import io.netty.util.Recycler;
 import io.netty.util.Recycler.Handle;
 import io.netty.util.ReferenceCountUtil;
-
+import io.netty.util.ReferenceCounted;
 import org.apache.bookkeeper.proto.BookkeeperProtocol.AuthMessage;
 import org.apache.bookkeeper.util.ByteBufList;
 
@@ -133,6 +133,7 @@ public interface BookieProtocol {
     byte READ_LAC = 4;
     byte WRITE_LAC = 5;
     byte GET_BOOKIE_INFO = 6;
+    byte BATCH_READ_ENTRY = 7;
 
     /**
      * The error code that indicates success.
@@ -179,6 +180,11 @@ public interface BookieProtocol {
      * Too many concurrent requests.
      */
     int ETOOMANYREQUESTS = 106;
+
+    /**
+     * Ledger in unknown state.
+     */
+    int EUNKNOWNLEDGERSTATE = 107;
 
     short FLAG_NONE = 0x0;
     short FLAG_DO_FENCING = 0x0001;
@@ -248,58 +254,6 @@ public interface BookieProtocol {
     }
 
     /**
-     * A Request that adds data.
-     */
-    class AddRequest extends Request {
-        ByteBufList data;
-
-        static AddRequest create(byte protocolVersion, long ledgerId,
-                                 long entryId, short flags, byte[] masterKey,
-                                 ByteBufList data) {
-            AddRequest add = RECYCLER.get();
-            add.protocolVersion = protocolVersion;
-            add.opCode = ADDENTRY;
-            add.ledgerId = ledgerId;
-            add.entryId = entryId;
-            add.flags = flags;
-            add.masterKey = masterKey;
-            add.data = data.retain();
-            return add;
-        }
-
-        ByteBufList getData() {
-            // We need to have different ByteBufList instances for each bookie write
-            return ByteBufList.clone(data);
-        }
-
-        boolean isRecoveryAdd() {
-            return (flags & FLAG_RECOVERY_ADD) == FLAG_RECOVERY_ADD;
-        }
-
-        private final Handle<AddRequest> recyclerHandle;
-        private AddRequest(Handle<AddRequest> recyclerHandle) {
-            this.recyclerHandle = recyclerHandle;
-        }
-
-        private static final Recycler<AddRequest> RECYCLER = new Recycler<AddRequest>() {
-            @Override
-            protected AddRequest newObject(Handle<AddRequest> handle) {
-                return new AddRequest(handle);
-            }
-        };
-
-        @Override
-        public void recycle() {
-            ledgerId = -1;
-            entryId = -1;
-            masterKey = null;
-            ReferenceCountUtil.safeRelease(data);
-            data = null;
-            recyclerHandle.recycle(this);
-        }
-    }
-
-    /**
      * This is similar to add request, but it used when processing the request on the bookie side.
      */
     class ParsedAddRequest extends Request {
@@ -328,7 +282,7 @@ public interface BookieProtocol {
         }
 
         void release() {
-            data.release();
+            ReferenceCountUtil.release(data);
         }
 
         private final Handle<ParsedAddRequest> recyclerHandle;
@@ -357,13 +311,113 @@ public interface BookieProtocol {
      * A Request that reads data.
      */
     class ReadRequest extends Request {
-        ReadRequest(byte protocolVersion, long ledgerId, long entryId,
-                    short flags, byte[] masterKey) {
-            init(protocolVersion, READENTRY, ledgerId, entryId, flags, masterKey);
+
+        static ReadRequest create(byte protocolVersion, long ledgerId, long entryId,
+                  short flags, byte[] masterKey) {
+            ReadRequest read = RECYCLER.get();
+            read.protocolVersion = protocolVersion;
+            read.opCode = READENTRY;
+            read.ledgerId = ledgerId;
+            read.entryId = entryId;
+            read.flags = flags;
+            read.masterKey = masterKey;
+            return read;
         }
 
         boolean isFencing() {
             return (flags & FLAG_DO_FENCING) == FLAG_DO_FENCING;
+        }
+
+        private final Handle<ReadRequest> recyclerHandle;
+
+        protected ReadRequest() {
+            recyclerHandle = null;
+        }
+
+        private ReadRequest(Handle<ReadRequest> recyclerHandle) {
+            this.recyclerHandle = recyclerHandle;
+        }
+
+        private static final Recycler<ReadRequest> RECYCLER = new Recycler<ReadRequest>() {
+            @Override
+            protected ReadRequest newObject(Handle<ReadRequest> handle) {
+                return new ReadRequest(handle);
+            }
+        };
+
+        @Override
+        public void recycle() {
+            ledgerId = -1;
+            entryId = -1;
+            masterKey = null;
+            if (recyclerHandle != null) {
+                recyclerHandle.recycle(this);
+            }
+        }
+    }
+
+    /**
+     * The request for reading data with batch optimization.
+     * The ledger_id and entry_id will be used as start_ledger_id and start_entry_id.
+     * And the batch read operation can only happen on one ledger.
+     */
+    class BatchedReadRequest extends ReadRequest {
+
+        long requestId;
+        int maxCount;
+        long maxSize;
+
+        static BatchedReadRequest create(byte protocolVersion, long ledgerId, long entryId,
+                short flags, byte[] masterKey, long requestId, int maxCount, long maxSize) {
+            BatchedReadRequest request = RECYCLER.get();
+            request.protocolVersion = protocolVersion;
+            request.ledgerId = ledgerId;
+            request.entryId = entryId;
+            request.flags = flags;
+            request.masterKey = masterKey;
+            request.requestId = requestId;
+            request.maxCount = maxCount;
+            request.maxSize = maxSize;
+            request.opCode = BATCH_READ_ENTRY;
+            return request;
+        }
+
+        int getMaxCount() {
+            return maxCount;
+        }
+
+        long getMaxSize() {
+            return maxSize;
+        }
+
+        long getRequestId() {
+            return requestId;
+        }
+
+        private final Handle<BatchedReadRequest> recyclerHandle;
+
+        private BatchedReadRequest(Handle<BatchedReadRequest> recyclerHandle) {
+            this.recyclerHandle = recyclerHandle;
+        }
+
+        private static final Recycler<BatchedReadRequest> RECYCLER = new Recycler<BatchedReadRequest>() {
+            @Override
+            protected BatchedReadRequest newObject(Handle<BatchedReadRequest> handle) {
+                return new BatchedReadRequest(handle);
+            }
+        };
+
+        @Override
+        public void recycle() {
+            ledgerId = -1;
+            entryId = -1;
+            masterKey = null;
+            maxCount = -1;
+            maxSize = -1;
+            requestId = -1;
+            if (recyclerHandle != null) {
+                recyclerHandle.recycle(this);
+            }
         }
     }
 
@@ -428,10 +482,8 @@ public interface BookieProtocol {
                                  opCode, ledgerId, entryId, errorCode);
         }
 
-        void retain() {
-        }
-
-        void release() {
+        boolean release() {
+            return true;
         }
 
         void recycle() {
@@ -441,7 +493,7 @@ public interface BookieProtocol {
     /**
      * A request that reads data.
      */
-    class ReadResponse extends Response {
+    class ReadResponse extends Response implements ReferenceCounted {
         final ByteBuf data;
 
         ReadResponse(byte protocolVersion, int errorCode, long ledgerId, long entryId) {
@@ -462,13 +514,109 @@ public interface BookieProtocol {
         }
 
         @Override
-        public void retain() {
-            data.retain();
+        public int refCnt() {
+            return data.refCnt();
         }
 
         @Override
-        public void release() {
-            data.release();
+        public ReferenceCounted retain() {
+            data.retain();
+            return this;
+        }
+
+        @Override
+        public ReferenceCounted retain(int increment) {
+            return data.retain(increment);
+        }
+
+        @Override
+        public ReferenceCounted touch() {
+            data.touch();
+            return this;
+        }
+
+        @Override
+        public ReferenceCounted touch(Object hint) {
+            data.touch(hint);
+            return this;
+        }
+
+        @Override
+        public boolean release() {
+            return data.release();
+        }
+
+        @Override
+        public boolean release(int decrement) {
+            return data.release(decrement);
+        }
+    }
+
+    /**
+     * The response for batched read.
+     * The ledger_id and entry_id will be used as start_ledger_id and start_entry_id.
+     * And all the returned data is from one ledger.
+     */
+    class BatchedReadResponse extends Response implements ReferenceCounted {
+
+        final long requestId;
+        final ByteBufList data;
+
+        BatchedReadResponse(byte protocolVersion, int errorCode, long ledgerId, long entryId, long requestId) {
+            this(protocolVersion, errorCode, ledgerId, entryId, requestId, ByteBufList.get());
+        }
+
+        BatchedReadResponse(byte protocolVersion, int errorCode, long ledgerId, long entryId, long requestId,
+                ByteBufList data) {
+            init(protocolVersion, BATCH_READ_ENTRY, errorCode, ledgerId, entryId);
+            this.requestId = requestId;
+            this.data = data;
+        }
+
+        ByteBufList getData() {
+            return data;
+        }
+
+        long getRequestId() {
+            return requestId;
+        }
+
+        @Override
+        public int refCnt() {
+            return data.refCnt();
+        }
+
+        @Override
+        public ReferenceCounted retain() {
+            data.retain();
+            return this;
+        }
+
+        @Override
+        public ReferenceCounted retain(int increment) {
+            return data.retain(increment);
+        }
+
+        @Override
+        public ReferenceCounted touch() {
+            data.touch();
+            return this;
+        }
+
+        @Override
+        public ReferenceCounted touch(Object hint) {
+            data.touch(hint);
+            return this;
+        }
+
+        @Override
+        public boolean release() {
+            return data.release();
+        }
+
+        @Override
+        public boolean release(int decrement) {
+            return data.release(decrement);
         }
     }
 

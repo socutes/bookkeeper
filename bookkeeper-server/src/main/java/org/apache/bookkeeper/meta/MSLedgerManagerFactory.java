@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -42,6 +42,7 @@ import org.apache.bookkeeper.client.BKException;
 import org.apache.bookkeeper.client.api.LedgerMetadata;
 import org.apache.bookkeeper.common.concurrent.FutureUtils;
 import org.apache.bookkeeper.conf.AbstractConfiguration;
+import org.apache.bookkeeper.conf.ServerConfiguration;
 import org.apache.bookkeeper.meta.zk.ZKMetadataDriverBase;
 import org.apache.bookkeeper.metastore.MSException;
 import org.apache.bookkeeper.metastore.MSWatchedEvent;
@@ -60,6 +61,7 @@ import org.apache.bookkeeper.metastore.Value;
 import org.apache.bookkeeper.proto.BookkeeperInternalCallbacks.LedgerMetadataListener;
 import org.apache.bookkeeper.proto.BookkeeperInternalCallbacks.Processor;
 import org.apache.bookkeeper.replication.ReplicationException;
+import org.apache.bookkeeper.stats.NullStatsLogger;
 import org.apache.bookkeeper.util.BookKeeperConstants;
 import org.apache.bookkeeper.util.StringUtils;
 import org.apache.bookkeeper.util.ZkUtils;
@@ -486,7 +488,7 @@ public class MSLedgerManagerFactory extends AbstractZkLedgerManagerFactory {
                 @Override
                 public void complete(int rc, Version version, Object ctx) {
                     if (MSException.Code.BadVersion.getCode() == rc) {
-                        LOG.info("Bad version provided to updat metadata for ledger {}", ledgerId);
+                        LOG.info("Bad version provided to update metadata for ledger {}", ledgerId);
                         promise.completeExceptionally(new BKException.BKMetadataVersionException());
                     } else if (MSException.Code.NoKey.getCode() == rc) {
                         LOG.warn("Ledger {} doesn't exist when writing its ledger metadata.", ledgerId);
@@ -669,7 +671,8 @@ public class MSLedgerManagerFactory extends AbstractZkLedgerManagerFactory {
     }
 
     @Override
-    public LedgerUnderreplicationManager newLedgerUnderreplicationManager() throws KeeperException,
+    public LedgerUnderreplicationManager newLedgerUnderreplicationManager()
+            throws ReplicationException.UnavailableException,
             InterruptedException, ReplicationException.CompatibilityException {
         // TODO: currently just use zk ledger underreplication manager
         return new ZkLedgerUnderreplicationManager(conf, zk);
@@ -758,7 +761,7 @@ public class MSLedgerManagerFactory extends AbstractZkLedgerManagerFactory {
         try {
             MetastoreUtils.cleanTable(ledgerTable, conf.getMetastoreMaxEntriesPerScan());
         } catch (MSException mse) {
-            throw new IOException("Exception when cleanning up table " + TABLE_NAME, mse);
+            throw new IOException("Exception when cleaning up table " + TABLE_NAME, mse);
         }
         LOG.info("Finished cleaning up table {}.", TABLE_NAME);
         // Delete and recreate the LAYOUT information.
@@ -814,5 +817,11 @@ public class MSLedgerManagerFactory extends AbstractZkLedgerManagerFactory {
         log.info("Successfully nuked existing cluster, ZKServers: {} ledger root path: {}",
                 zkServers, zkLedgersRootPath);
         return true;
+    }
+
+    @Override
+    public LedgerAuditorManager newLedgerAuditorManager() {
+        ServerConfiguration serverConfiguration = new ServerConfiguration(conf);
+        return new ZkLedgerAuditorManager(zk, serverConfiguration, NullStatsLogger.INSTANCE);
     }
 }

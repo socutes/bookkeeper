@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -37,12 +37,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.bookkeeper.bookie.ExitCode;
 import org.apache.bookkeeper.bookie.LedgerStorage;
+import org.apache.bookkeeper.common.util.MathUtils;
 import org.apache.bookkeeper.server.component.ServerLifecycleComponent;
 import org.apache.bookkeeper.server.conf.BookieConfiguration;
 import org.apache.bookkeeper.stats.Counter;
 import org.apache.bookkeeper.stats.OpStatsLogger;
 import org.apache.bookkeeper.stats.StatsLogger;
-import org.apache.bookkeeper.util.MathUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -105,7 +105,7 @@ public class ScrubberService extends ServerLifecycleComponent {
         try {
             List<LedgerStorage.DetectedInconsistency> errors = ledgerStorage.localConsistencyCheck(scrubRateLimiter);
             if (errors.size() > 0) {
-                errorCounter.add(errors.size());
+                errorCounter.addCount(errors.size());
                 LOG.error("Found inconsistency during localConsistencyCheck:");
                 for (LedgerStorage.DetectedInconsistency error : errors) {
                     LOG.error("Ledger {}, entry {}: ", error.getLedgerId(), error.getEntryId(), error.getException());

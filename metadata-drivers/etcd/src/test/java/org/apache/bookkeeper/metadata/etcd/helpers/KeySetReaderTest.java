@@ -27,14 +27,12 @@ import io.etcd.jetcd.ByteSequence;
 import io.etcd.jetcd.options.PutOption;
 import io.etcd.jetcd.support.CloseableClient;
 import io.etcd.jetcd.support.Observers;
-
 import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.function.Consumer;
 import java.util.function.Function;
-
 import lombok.extern.slf4j.Slf4j;
 import org.apache.bookkeeper.common.concurrent.FutureUtils;
 import org.apache.bookkeeper.metadata.etcd.testing.EtcdTestBase;
@@ -42,8 +40,8 @@ import org.apache.bookkeeper.versioning.LongVersion;
 import org.apache.bookkeeper.versioning.Version.Occurred;
 import org.apache.bookkeeper.versioning.Versioned;
 import org.apache.commons.compress.utils.Sets;
+import org.apache.commons.lang3.RandomStringUtils;
 import org.junit.Test;
-import org.testcontainers.shaded.org.apache.commons.lang.RandomStringUtils;
 
 /**
  * Integration test {@link KeySetReader}.

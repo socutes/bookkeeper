@@ -41,7 +41,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.google.common.collect.Lists;
-
 import java.time.Duration;
 import java.util.HashSet;
 import java.util.List;
@@ -49,16 +48,13 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
-
 import lombok.extern.slf4j.Slf4j;
-
 import org.apache.bookkeeper.client.BKException.ZKException;
 import org.apache.bookkeeper.common.testing.executors.MockExecutorController;
 import org.apache.bookkeeper.discover.RegistrationClient.RegistrationListener;
 import org.apache.bookkeeper.discover.ZKRegistrationClient.WatchTask;
 import org.apache.bookkeeper.net.BookieId;
 import org.apache.bookkeeper.net.BookieSocketAddress;
-import org.apache.bookkeeper.util.ZkUtils;
 import org.apache.bookkeeper.versioning.LongVersion;
 import org.apache.bookkeeper.versioning.Versioned;
 import org.apache.bookkeeper.zookeeper.MockZooKeeperTestCase;
@@ -74,14 +70,12 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TestName;
 import org.junit.runner.RunWith;
-import org.powermock.core.classloader.annotations.PrepareForTest;
-import org.powermock.modules.junit4.PowerMockRunner;
+import org.mockito.junit.MockitoJUnitRunner;
 
 /**
  * Unit test of {@link RegistrationClient}.
  */
-@RunWith(PowerMockRunner.class)
-@PrepareForTest({ ZKRegistrationClient.class, ZkUtils.class })
+@RunWith(MockitoJUnitRunner.Silent.class)
 @Slf4j
 public abstract class AbstractTestZkRegistrationClient extends MockZooKeeperTestCase {
 
@@ -130,7 +124,9 @@ public abstract class AbstractTestZkRegistrationClient extends MockZooKeeperTest
     }
 
     @After
-    public void teardown() {
+    public void teardown() throws Exception{
+        super.teardown();
+
         if (null != zkRegistrationClient) {
             zkRegistrationClient.close();
         }
@@ -151,7 +147,7 @@ public abstract class AbstractTestZkRegistrationClient extends MockZooKeeperTest
                         Code.NONODE.intValue(),
                         new byte[] {},
                         new Stat());
-            mockZkGetData(regReadonlyPath + "/" + address.toString(),
+            mockZkGetData(regReadonlyPath + "/" + address,
                         zkRegistrationClient.isBookieAddressTracking(),
                         Code.OK.intValue(),
                         new byte[] {},
@@ -162,7 +158,7 @@ public abstract class AbstractTestZkRegistrationClient extends MockZooKeeperTest
                         Code.OK.intValue(),
                         new byte[] {},
                         new Stat());
-            mockZkGetData(regReadonlyPath + "/" + address.toString(),
+            mockZkGetData(regReadonlyPath + "/" + address,
                         zkRegistrationClient.isBookieAddressTracking(),
                         Code.NONODE.intValue(),
                         new byte[] {},

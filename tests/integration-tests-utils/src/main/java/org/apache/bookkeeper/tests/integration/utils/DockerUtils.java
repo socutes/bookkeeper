@@ -25,7 +25,7 @@ import com.github.dockerjava.api.command.InspectContainerResponse;
 import com.github.dockerjava.api.command.InspectExecResponse;
 import com.github.dockerjava.api.model.ContainerNetwork;
 import com.github.dockerjava.api.model.Frame;
-
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.Closeable;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -39,11 +39,9 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-
 import java.util.zip.GZIPOutputStream;
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -105,6 +103,7 @@ public class DockerUtils {
         }
     }
 
+    @SuppressFBWarnings("RCN_REDUNDANT_NULLCHECK_WOULD_HAVE_BEEN_A_NPE")
     public static void dumpContainerDirToTargetCompressed(DockerClient dockerClient, String containerId,
                                                           String path) {
         final int readBlockSize = 10000;
@@ -133,10 +132,14 @@ public class DockerUtils {
 
         try (InputStream dockerStream = docker.copyArchiveFromContainerCmd(containerId, path).exec();
              TarArchiveInputStream stream = new TarArchiveInputStream(dockerStream)) {
-            TarArchiveEntry entry = stream.getNextTarEntry();
+            TarArchiveEntry entry = stream.getNextEntry();
             while (entry != null) {
                 if (entry.isFile()) {
-                    File output = new File(getTargetDirectory(containerId), entry.getName().replace("/", "-"));
+                    File targetDir = getTargetDirectory(containerId);
+                    File output = new File(targetDir, entry.getName().replace("/", "-"));
+                    if (!output.toPath().normalize().startsWith(targetDir.toPath())) {
+                        throw new IOException("Bad zip entry");
+                    }
                     try (FileOutputStream os = new FileOutputStream(output)) {
                         byte[] block = new byte[readBlockSize];
                         int read = stream.read(block, 0, readBlockSize);
@@ -146,7 +149,7 @@ public class DockerUtils {
                         }
                     }
                 }
-                entry = stream.getNextTarEntry();
+                entry = stream.getNextEntry();
             }
         } catch (RuntimeException | IOException e) {
             LOG.error("Error reading bk logs from container {}", containerId, e);

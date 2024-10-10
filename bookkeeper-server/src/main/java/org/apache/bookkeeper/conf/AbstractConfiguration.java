@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,16 +19,14 @@ package org.apache.bookkeeper.conf;
 
 import static org.apache.bookkeeper.conf.ClientConfiguration.CLIENT_AUTH_PROVIDER_FACTORY_CLASS;
 
+import io.netty.buffer.PooledByteBufAllocator;
 import java.net.URL;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-
 import javax.net.ssl.SSLEngine;
-
 import lombok.extern.slf4j.Slf4j;
-
 import org.apache.bookkeeper.common.allocator.LeakDetectionPolicy;
 import org.apache.bookkeeper.common.allocator.OutOfMemoryPolicy;
 import org.apache.bookkeeper.common.allocator.PoolingPolicy;
@@ -75,6 +73,7 @@ public abstract class AbstractConfiguration<T extends AbstractConfiguration>
     // Zookeeper Parameters
     protected static final String ZK_TIMEOUT = "zkTimeout";
     protected static final String ZK_SERVERS = "zkServers";
+    protected static final String ZK_RETRY_BACKOFF_MAX_RETRIES = "zkRetryBackoffMaxRetries";
 
     // Ledger Manager
     protected static final String LEDGER_MANAGER_TYPE = "ledgerManagerType";
@@ -85,6 +84,7 @@ public abstract class AbstractConfiguration<T extends AbstractConfiguration>
     protected static final String METADATA_SERVICE_URI = "metadataServiceUri";
     protected static final String ZK_LEDGERS_ROOT_PATH = "zkLedgersRootPath";
     protected static final String ZK_REQUEST_RATE_LIMIT = "zkRequestRateLimit";
+    protected static final String ZK_REPLICATION_TASK_RATE_LIMIT = "zkReplicationTaskRateLimit";
     protected static final String AVAILABLE_NODE = "available";
     protected static final String REREPLICATION_ENTRY_BATCH_SIZE = "rereplicationEntryBatchSize";
     protected static final String STORE_SYSTEMTIME_AS_LEDGER_UNDERREPLICATED_MARK_TIME =
@@ -92,6 +92,7 @@ public abstract class AbstractConfiguration<T extends AbstractConfiguration>
     protected static final String STORE_SYSTEMTIME_AS_LEDGER_CREATION_TIME = "storeSystemTimeAsLedgerCreationTime";
 
     protected static final String ENABLE_BUSY_WAIT = "enableBusyWait";
+    protected static final String ENABLE_HEALTH_CHECK = "enableHealthCheck";
 
     // Metastore settings, only being used when LEDGER_MANAGER_FACTORY_CLASS is MSLedgerManagerFactory
     protected static final String METASTORE_IMPL_CLASS = "metastoreImplClass";
@@ -183,9 +184,12 @@ public abstract class AbstractConfiguration<T extends AbstractConfiguration>
     protected static final String ALLOCATOR_POOLING_CONCURRENCY = "allocatorPoolingConcurrency";
     protected static final String ALLOCATOR_OOM_POLICY = "allocatorOutOfMemoryPolicy";
     protected static final String ALLOCATOR_LEAK_DETECTION_POLICY = "allocatorLeakDetectionPolicy";
+    protected static final String ALLOCATOR_EXIT_ON_OUT_OF_MEMORY = "allocatorExitOnOutOfMemory";
 
     // option to limit stats logging
     public static final String LIMIT_STATS_LOGGING = "limitStatsLogging";
+
+    protected static final String REPLICATION_RATE_BY_BYTES = "replicationRateByBytes";
 
     protected AbstractConfiguration() {
         super();
@@ -265,7 +269,7 @@ public abstract class AbstractConfiguration<T extends AbstractConfiguration>
      */
     public String getMetadataServiceUri() throws ConfigurationException {
         String serviceUri = getString(METADATA_SERVICE_URI);
-        if (null == serviceUri) {
+        if (StringUtils.isBlank(serviceUri)) {
             // no service uri is defined, fallback to old settings
             String ledgerManagerType;
             ledgerManagerType = getLedgerManagerLayoutStringFromFactoryClass();
@@ -342,6 +346,27 @@ public abstract class AbstractConfiguration<T extends AbstractConfiguration>
      */
     public T setZkTimeout(int zkTimeout) {
         setProperty(ZK_TIMEOUT, Integer.toString(zkTimeout));
+        return getThis();
+    }
+
+    /**
+     * Get zookeeper client backoff max retry times.
+     *
+     * @return zk backoff max retry times.
+     */
+    public int getZkRetryBackoffMaxRetries() {
+        return getInt(ZK_RETRY_BACKOFF_MAX_RETRIES, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Set zookeeper client backoff max retry times.
+     *
+     * @param maxRetries
+     *          backoff max retry times
+     * @return server configuration.
+     */
+    public T setZkRetryBackoffMaxRetries(int maxRetries) {
+        setProperty(ZK_RETRY_BACKOFF_MAX_RETRIES, Integer.toString(maxRetries));
         return getThis();
     }
 
@@ -1060,7 +1085,7 @@ public abstract class AbstractConfiguration<T extends AbstractConfiguration>
      * @return the configured pooling concurrency for the allocator.
      */
     public int getAllocatorPoolingConcurrency() {
-        return this.getInteger(ALLOCATOR_POOLING_CONCURRENCY, 2 * Runtime.getRuntime().availableProcessors());
+        return this.getInteger(ALLOCATOR_POOLING_CONCURRENCY, PooledByteBufAllocator.defaultNumDirectArena());
     }
 
     /**
@@ -1075,7 +1100,7 @@ public abstract class AbstractConfiguration<T extends AbstractConfiguration>
      *            the concurrency level to use for the allocator pool
      * @return configuration object.
      */
-    public T setAllocatorPoolingConcurrenncy(int concurrency) {
+    public T setAllocatorPoolingConcurrency(int concurrency) {
         this.setProperty(ALLOCATOR_POOLING_POLICY, concurrency);
         return getThis();
     }
@@ -1106,8 +1131,17 @@ public abstract class AbstractConfiguration<T extends AbstractConfiguration>
      * Return the configured leak detection policy for the allocator.
      */
     public LeakDetectionPolicy getAllocatorLeakDetectionPolicy() {
-        return LeakDetectionPolicy
-                .valueOf(this.getString(ALLOCATOR_LEAK_DETECTION_POLICY, LeakDetectionPolicy.Disabled.toString()));
+        //see: https://lists.apache.org/thread/d3zw8bxhlg0wxfhocyjglq0nbxrww3sg
+        String nettyLevelStr = System.getProperty("io.netty.leakDetectionLevel", LeakDetectionPolicy.Disabled.name());
+        nettyLevelStr = System.getProperty("io.netty.leakDetection.level", nettyLevelStr);
+        String bkLevelStr = getString(ALLOCATOR_LEAK_DETECTION_POLICY, LeakDetectionPolicy.Disabled.name());
+        LeakDetectionPolicy nettyLevel = LeakDetectionPolicy.parseLevel(nettyLevelStr);
+        LeakDetectionPolicy bkLevel = LeakDetectionPolicy.parseLevel(bkLevelStr);
+        if (nettyLevel.ordinal() >= bkLevel.ordinal()) {
+            return nettyLevel;
+        } else {
+            return bkLevel;
+        }
     }
 
     /**
@@ -1122,6 +1156,15 @@ public abstract class AbstractConfiguration<T extends AbstractConfiguration>
     public T setAllocatorLeakDetectionPolicy(LeakDetectionPolicy leakDetectionPolicy) {
         this.setProperty(ALLOCATOR_LEAK_DETECTION_POLICY, leakDetectionPolicy.toString());
         return getThis();
+    }
+
+    public T setExitOnOutOfMemory(boolean exitOnOutOfMemory) {
+        this.setProperty(ALLOCATOR_EXIT_ON_OUT_OF_MEMORY, exitOnOutOfMemory);
+        return getThis();
+    }
+
+    public boolean exitOnOutOfMemory() {
+        return getBoolean(ALLOCATOR_EXIT_ON_OUT_OF_MEMORY, false);
     }
 
     /**
@@ -1149,14 +1192,14 @@ public abstract class AbstractConfiguration<T extends AbstractConfiguration>
      * CPU cores busy.
      * </p>
      *
-     * @param busyWaitEanbled
+     * @param busyWaitEnabled
      *            if enabled, use spin-waiting strategy to reduce latency in
      *            context switches
      *
      * @see #isBusyWaitEnabled()
      */
-    public T setBusyWaitEnabled(boolean busyWaitEanbled) {
-        setProperty(ENABLE_BUSY_WAIT, busyWaitEanbled);
+    public T setBusyWaitEnabled(boolean busyWaitEnabled) {
+        setProperty(ENABLE_BUSY_WAIT, busyWaitEnabled);
         return getThis();
     }
 
@@ -1167,7 +1210,7 @@ public abstract class AbstractConfiguration<T extends AbstractConfiguration>
      *      the boolean flag indicating whether to limit stats logging
      */
     public boolean getLimitStatsLogging() {
-        return getBoolean(LIMIT_STATS_LOGGING, false);
+        return getBoolean(LIMIT_STATS_LOGGING, true);
     }
 
     /**
@@ -1179,6 +1222,48 @@ public abstract class AbstractConfiguration<T extends AbstractConfiguration>
      */
     public T setLimitStatsLogging(boolean limitStatsLogging) {
         setProperty(LIMIT_STATS_LOGGING, limitStatsLogging);
+        return getThis();
+    }
+
+    /**
+     * Get the bytes rate of re-replication.
+     * Default value is -1 which it means entries will replicated without any throttling activity.
+     *
+     * @return bytes rate of re-replication.
+     */
+    public int getReplicationRateByBytes() {
+        return getInt(REPLICATION_RATE_BY_BYTES, -1);
+    }
+
+    /**
+     * Set the bytes rate of re-replication.
+     *
+     * @param rate bytes rate of re-replication.
+     *
+     * @return ClientConfiguration
+     */
+    public T setReplicationRateByBytes(int rate) {
+        this.setProperty(REPLICATION_RATE_BY_BYTES, rate);
+        return getThis();
+    }
+
+    /**
+     * get the max tasks can be acquired per second of re-replication.
+     * @return max tasks can be acquired per second of re-replication.
+     */
+    public double getZkReplicationTaskRateLimit() {
+        return getDouble(ZK_REPLICATION_TASK_RATE_LIMIT, 0);
+    }
+
+    /**
+     * set the max tasks can be acquired per second of re-replication, default is 0, which means no limit.
+     * Value greater than 0 will enable the rate limiting. Decimal value is allowed.
+     * For example, 0.5 means 1 task per 2 seconds, 1 means 1 task per second.
+     * @param zkReplicationTaskRateLimit
+     * @return ClientConfiguration
+     */
+    public T setZkReplicationTaskRateLimit(double zkReplicationTaskRateLimit) {
+        setProperty(ZK_REPLICATION_TASK_RATE_LIMIT, zkReplicationTaskRateLimit);
         return getThis();
     }
 
@@ -1201,7 +1286,7 @@ public abstract class AbstractConfiguration<T extends AbstractConfiguration>
         Map<String, Object> configMap = new HashMap<>();
         Iterator<String> iterator = this.getKeys();
         while (iterator.hasNext()) {
-            String key = iterator.next().toString();
+            String key = iterator.next();
             Object property = this.getProperty(key);
             if (property != null) {
                 configMap.put(key, property.toString());

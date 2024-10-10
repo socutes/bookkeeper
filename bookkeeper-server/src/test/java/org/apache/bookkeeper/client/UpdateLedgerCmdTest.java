@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -21,6 +21,7 @@
 package org.apache.bookkeeper.client;
 
 import static org.junit.Assert.assertEquals;
+
 import java.io.IOException;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
@@ -100,7 +101,7 @@ public class UpdateLedgerCmdTest extends BookKeeperClusterTestCase {
         String[] argv = new String[] { "updateBookieInLedger", "-sb", srcBookie.toString(), "-db",
                 destBookie.toString(), "-v", "true", "-p", "2" };
         final ServerConfiguration conf = confByIndex(0);
-        serverByIndex(0).shutdown();
+        killBookie(0);
         updateLedgerCmd(argv, 0, conf);
         int updatedLedgersCount = getUpdatedLedgersCount(bk, ledgers, srcBookie);
         assertEquals("Failed to update the ledger metadata with new bookie-address", 0, updatedLedgersCount);

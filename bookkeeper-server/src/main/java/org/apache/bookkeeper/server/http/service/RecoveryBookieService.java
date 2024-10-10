@@ -22,10 +22,8 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import static org.apache.bookkeeper.meta.MetadataDrivers.runFunctionWithRegistrationManager;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
-
 import java.util.List;
 import java.util.concurrent.ExecutorService;
-
 import org.apache.bookkeeper.bookie.Cookie;
 import org.apache.bookkeeper.client.BookKeeperAdmin;
 import org.apache.bookkeeper.common.util.JsonUtil;
@@ -46,7 +44,6 @@ import org.slf4j.LoggerFactory;
  * The parameter of input body should be like this format:
  * {
  *   "bookie_src": [ "bookie_src1", "bookie_src2"... ],
- *   "bookie_dest": [ "bookie_dest1", "bookie_dest2"... ],
  *   "delete_cookie": &lt;bool_value&gt;
  * }
  */
@@ -94,8 +91,10 @@ public class RecoveryBookieService implements HttpEndpointService {
 
         try {
             requestJsonBody = JsonUtil.fromJson(requestBody, RecoveryRequestJsonBody.class);
-            LOG.debug("bookie_src: [" + requestJsonBody.bookieSrc.get(0)
-                + "],  delete_cookie: [" + requestJsonBody.deleteCookie + "]");
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("bookie_src: [" + requestJsonBody.bookieSrc.get(0)
+                        + "],  delete_cookie: [" + requestJsonBody.deleteCookie + "]");
+            }
         } catch (JsonUtil.ParseJsonException e) {
             LOG.error("Meet Exception: ", e);
             response.setCode(HttpServer.StatusCode.NOT_FOUND);

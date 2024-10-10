@@ -19,10 +19,9 @@
   <parent>
     <groupId>org.apache.bookkeeper.tests</groupId>
     <artifactId>docker-images</artifactId>
-    <version>4.15.0-SNAPSHOT</version>
+    <version>4.18.0-SNAPSHOT</version>
   </parent>
   <modelVersion>4.0.0</modelVersion>
-  <groupId>org.apache.bookkeeper.tests</groupId>
   <artifactId>all-released-versions-image</artifactId>
   <name>Apache BookKeeper :: Tests :: Docker Images :: All Released Versions</name>
   <packaging>pom</packaging>
@@ -62,6 +61,10 @@
               <repository>apachebookkeeper/bookkeeper-all-released-versions</repository>
               <tag>${project.version}</tag>
               <pullNewerImage>false</pullNewerImage>
+              <buildArgs>
+                <UBUNTU_MIRROR>${UBUNTU_MIRROR}</UBUNTU_MIRROR>
+                <UBUNTU_SECURITY_MIRROR>${UBUNTU_SECURITY_MIRROR}</UBUNTU_SECURITY_MIRROR>
+              </buildArgs>
             </configuration>
           </plugin>
         </plugins>

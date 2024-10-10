@@ -20,10 +20,9 @@
   <parent>
     <groupId>org.apache.bookkeeper</groupId>
     <artifactId>stream-storage-parent</artifactId>
-    <version>4.15.0-SNAPSHOT</version>
+    <version>4.18.0-SNAPSHOT</version>
     <relativePath>..</relativePath>
   </parent>
-  <groupId>org.apache.bookkeeper</groupId>
   <artifactId>stream-storage-proto</artifactId>
   <name>Apache BookKeeper :: Stream Storage :: Proto</name>
 
@@ -48,6 +47,12 @@
       <optional>true</optional>
     </dependency>
     <dependency>
+      <groupId>org.apache.bookkeeper</groupId>
+      <artifactId>testtools</artifactId>
+      <version>${project.parent.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
       <groupId>org.apache.bookkeeper.tests</groupId>
       <artifactId>stream-storage-tests-common</artifactId>
       <version>${project.version}</version>
@@ -65,16 +70,9 @@
     </extensions>
     <plugins>
       <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
-        <version>${maven-compiler-plugin.version}</version>
         <configuration>
-          <source>${javac.target}</source>
-          <target>${javac.target}</target>
-          <compilerArgs>
-            <compilerArg>-Xlint:unchecked</compilerArg>
-            <!-- https://issues.apache.org/jira/browse/MCOMPILER-205 -->
-            <compilerArg>-Xpkginfo:always</compilerArg>
-          </compilerArgs>
           <showDeprecation>false</showDeprecation>
           <showWarnings>false</showWarnings>
         </configuration>
@@ -101,7 +99,6 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-jar-plugin</artifactId>
-        <version>${maven-jar-plugin.version}</version>
         <executions>
           <execution>
             <goals>

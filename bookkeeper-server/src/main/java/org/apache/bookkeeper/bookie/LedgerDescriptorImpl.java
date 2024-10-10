@@ -40,10 +40,10 @@ import org.slf4j.LoggerFactory;
 public class LedgerDescriptorImpl extends LedgerDescriptor {
     private static final Logger LOG = LoggerFactory.getLogger(LedgerDescriptorImpl.class);
     final LedgerStorage ledgerStorage;
-    private long ledgerId;
+    private final long ledgerId;
     final byte[] masterKey;
 
-    private AtomicBoolean fenceEntryPersisted = new AtomicBoolean();
+    private final AtomicBoolean fenceEntryPersisted = new AtomicBoolean();
     private CompletableFuture<Boolean> logFenceResult = null;
 
     LedgerDescriptorImpl(byte[] masterKey,
@@ -74,7 +74,7 @@ public class LedgerDescriptorImpl extends LedgerDescriptor {
     }
 
     @Override
-    boolean isFenced() throws IOException {
+    boolean isFenced() throws IOException, BookieException {
         return ledgerStorage.isFenced(ledgerId);
     }
 
@@ -84,7 +84,7 @@ public class LedgerDescriptorImpl extends LedgerDescriptor {
     }
 
     @Override
-    ByteBuf getExplicitLac() throws IOException {
+    ByteBuf getExplicitLac() throws IOException, BookieException {
         return ledgerStorage.getExplicitLac(ledgerId);
     }
 
@@ -157,12 +157,12 @@ public class LedgerDescriptorImpl extends LedgerDescriptor {
     }
 
     @Override
-    ByteBuf readEntry(long entryId) throws IOException {
+    ByteBuf readEntry(long entryId) throws IOException, BookieException {
         return ledgerStorage.getEntry(ledgerId, entryId);
     }
 
     @Override
-    long getLastAddConfirmed() throws IOException {
+    long getLastAddConfirmed() throws IOException, BookieException {
         return ledgerStorage.getLastAddConfirmed(ledgerId);
     }
 

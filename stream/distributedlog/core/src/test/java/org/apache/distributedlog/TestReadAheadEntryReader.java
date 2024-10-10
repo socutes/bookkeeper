@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -236,7 +236,7 @@ public class TestReadAheadEntryReader extends TestDistributedLogBase {
         assertEquals(segments.size() + " log segments found, expected to be only one",
                 1, segments.size());
 
-        // notify the readahead reader with new segment lsit
+        // notify the readahead reader with new segment list
         readAheadEntryReader.onSegmentsUpdated(segments);
 
         // check the reader state after initialization

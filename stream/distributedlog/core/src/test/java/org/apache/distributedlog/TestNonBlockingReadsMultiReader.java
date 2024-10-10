@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -93,6 +93,7 @@ public class TestNonBlockingReadsMultiReader extends TestDistributedLogBase {
         final RateLimiter limiter = RateLimiter.create(1000);
 
         DistributedLogConfiguration confLocal = new DistributedLogConfiguration();
+        confLocal.loadConf(conf);
         confLocal.setOutputBufferSize(0);
         confLocal.setImmediateFlushEnabled(true);
 

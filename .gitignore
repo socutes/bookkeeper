@@ -4,8 +4,10 @@
 .settings/
 .recommenders/
 
-# Intellij
+# IntelliJ
 .idea/
+!.idea/icon.svg
+!.idea/vcs.xml
 *.iml
 *.iws
 
@@ -44,3 +46,5 @@ package-lock.json
 # gradle
 build/
 .gradle/
+*.log
+*.dat

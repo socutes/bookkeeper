@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,10 +19,8 @@
 package org.apache.bookkeeper.client;
 
 import com.google.common.collect.Lists;
-
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
-
 import java.security.GeneralSecurityException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -32,7 +30,6 @@ import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.RejectedExecutionException;
-
 import org.apache.bookkeeper.client.AsyncCallback.AddCallback;
 import org.apache.bookkeeper.client.AsyncCallback.CloseCallback;
 import org.apache.bookkeeper.client.AsyncCallback.ReadCallback;
@@ -83,9 +80,17 @@ public class MockLedgerHandle extends LedgerHandle {
             return;
         }
 
+        LedgerMetadata metadata = getLedgerMetadata();
+        metadata = LedgerMetadataBuilder.from(metadata)
+                .withClosedState()
+                .withLastEntryId(lastEntry)
+                .withLength(length)
+                .build();
+        setLedgerMetadata(getVersionedLedgerMetadata(), new Versioned<>(metadata, new LongVersion(1L)));
+
         fenced = true;
         try {
-            bk.executor.execute(() -> cb.closeComplete(0, this, ctx));
+            executeOrdered(() -> cb.closeComplete(0, this, ctx));
         } catch (RejectedExecutionException e) {
             cb.closeComplete(0, this, ctx);
         }
@@ -99,25 +104,32 @@ public class MockLedgerHandle extends LedgerHandle {
             return;
         }
 
-        bk.executor.execute(new Runnable() {
+        executeOrdered(new Runnable() {
             public void run() {
                 if (bk.getProgrammedFailStatus()) {
                     cb.readComplete(bk.failReturnCode, MockLedgerHandle.this, null, ctx);
                     return;
                 } else if (bk.isStopped()) {
-                    log.debug("Bookkeeper is closed!");
+                    if (log.isDebugEnabled()) {
+                        log.debug("Bookkeeper is closed!");
+                    }
                     cb.readComplete(-1, MockLedgerHandle.this, null, ctx);
                     return;
                 }
 
-                log.debug("readEntries: first={} last={} total={}", firstEntry, lastEntry, entries.size());
+                if (log.isDebugEnabled()) {
+                    log.debug("readEntries: first={} last={} total={}",
+                            firstEntry, lastEntry, entries.size());
+                }
                 final Queue<LedgerEntry> seq = new ArrayDeque<LedgerEntry>();
                 long entryId = firstEntry;
                 while (entryId <= lastEntry && entryId < entries.size()) {
                     seq.add(new LedgerEntry(entries.get((int) entryId++).duplicate()));
                 }
 
-                log.debug("Entries read: {}", seq);
+                if (log.isDebugEnabled()) {
+                    log.debug("Entries read: {}", seq);
+                }
 
                 try {
                     Thread.sleep(1);
@@ -179,7 +191,7 @@ public class MockLedgerHandle extends LedgerHandle {
         }
 
         data.retain();
-        bk.executor.execute(new Runnable() {
+        executeOrdered(new Runnable() {
             public void run() {
                 if (bk.getProgrammedFailStatus()) {
                     fenced = true;

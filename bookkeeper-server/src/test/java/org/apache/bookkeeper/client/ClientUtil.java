@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -22,15 +22,13 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.buffer.UnpooledByteBufAllocator;
-
 import java.security.GeneralSecurityException;
 import java.util.function.Function;
-
 import org.apache.bookkeeper.client.api.LedgerMetadata;
 import org.apache.bookkeeper.meta.LedgerManager;
 import org.apache.bookkeeper.proto.DataFormats.LedgerMetadataFormat.DigestType;
+import org.apache.bookkeeper.proto.MockBookieClient;
 import org.apache.bookkeeper.proto.checksum.DigestManager;
-import org.apache.bookkeeper.util.ByteBufList;
 import org.apache.bookkeeper.versioning.Versioned;
 
 /**
@@ -50,8 +48,8 @@ public class ClientUtil {
             int offset, int len) throws GeneralSecurityException {
         DigestManager dm = DigestManager.instantiate(ledgerId, new byte[2], DigestType.CRC32,
                 UnpooledByteBufAllocator.DEFAULT, true);
-        return ByteBufList.coalesce(dm.computeDigestAndPackageForSending(entryId, lastAddConfirmed, length,
-                Unpooled.wrappedBuffer(data, offset, len)));
+        return MockBookieClient.copyDataWithSkipHeader(dm.computeDigestAndPackageForSending(entryId, lastAddConfirmed,
+            length, Unpooled.wrappedBuffer(data, offset, len), new byte[20], 0));
     }
 
     /**

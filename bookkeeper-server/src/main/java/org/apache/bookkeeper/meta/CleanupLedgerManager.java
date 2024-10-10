@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -18,15 +18,13 @@
 package org.apache.bookkeeper.meta;
 
 import com.google.common.annotations.VisibleForTesting;
-
 import java.io.IOException;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-
+import lombok.extern.slf4j.Slf4j;
 import org.apache.bookkeeper.client.BKException;
 import org.apache.bookkeeper.client.api.LedgerMetadata;
 import org.apache.bookkeeper.common.concurrent.FutureUtils;
@@ -40,6 +38,7 @@ import org.apache.zookeeper.AsyncCallback;
 /**
  * A ledger manager that cleans up resources upon closing.
  */
+@Slf4j
 public class CleanupLedgerManager implements LedgerManager {
 
     private class CleanupGenericCallback<T> implements GenericCallback<T> {
@@ -55,7 +54,7 @@ public class CleanupLedgerManager implements LedgerManager {
         public void operationComplete(int rc, T result) {
             closeLock.readLock().lock();
             try {
-                if (!closed && null != removeCallback(cb)) {
+                if (!closed && removeCallback(cb)) {
                     cb.operationComplete(rc, result);
                 }
             } finally {
@@ -78,8 +77,7 @@ public class CleanupLedgerManager implements LedgerManager {
     }
 
     private final LedgerManager underlying;
-    private final ConcurrentMap<GenericCallback, GenericCallback> callbacks =
-        new ConcurrentHashMap<GenericCallback, GenericCallback>();
+    private final Set<GenericCallback> callbacks = ConcurrentHashMap.newKeySet();
     private boolean closed = false;
     private final ReentrantReadWriteLock closeLock = new ReentrantReadWriteLock();
     private final Set<CompletableFuture<?>> futures = ConcurrentHashMap.newKeySet();
@@ -94,7 +92,7 @@ public class CleanupLedgerManager implements LedgerManager {
     }
 
     private void addCallback(GenericCallback callback) {
-        callbacks.put(callback, callback);
+        callbacks.add(callback);
     }
 
     @Override
@@ -107,13 +105,20 @@ public class CleanupLedgerManager implements LedgerManager {
         underlying.unregisterLedgerMetadataListener(ledgerId, listener);
     }
 
-    private GenericCallback removeCallback(GenericCallback callback) {
+    private boolean removeCallback(GenericCallback callback) {
         return callbacks.remove(callback);
     }
 
     private void recordPromise(CompletableFuture<?> promise) {
         futures.add(promise);
-        promise.thenRun(() -> futures.remove(promise));
+        promise.whenComplete((result, exception) -> {
+            futures.remove(promise);
+        });
+    }
+
+    @VisibleForTesting
+    int getCurrentFuturePromiseSize() {
+        return futures.size();
     }
 
     @Override
@@ -199,7 +204,7 @@ public class CleanupLedgerManager implements LedgerManager {
             underlying.asyncProcessLedgers(processor, new AsyncCallback.VoidCallback() {
                 @Override
                 public void processResult(int rc, String path, Object ctx) {
-                    if (null != removeCallback(stub)) {
+                    if (removeCallback(stub)) {
                         finalCb.processResult(rc, path, ctx);
                     }
                 }
@@ -232,14 +237,13 @@ public class CleanupLedgerManager implements LedgerManager {
                 return;
             }
             closed = true;
-            keys = new HashSet<GenericCallback>(callbacks.keySet());
+            keys = new HashSet<>(callbacks);
         } finally {
             closeLock.writeLock().unlock();
         }
         for (GenericCallback key : keys) {
-            GenericCallback callback = callbacks.remove(key);
-            if (null != callback) {
-                callback.operationComplete(BKException.Code.ClientClosedException, null);
+            if (callbacks.remove(key)) {
+                key.operationComplete(BKException.Code.ClientClosedException, null);
             }
         }
         BKException exception = new BKException.BKClientClosedException();

@@ -59,10 +59,7 @@
         <!-- dev -->
         <exclude>dev/**</exclude>
         <!-- site -->
-        <exclude>site/**</exclude>
-        <exclude>site2/**</exclude>
-        <!-- jenkins -->
-        <exclude>jenkins/**</exclude>
+        <exclude>site3/**</exclude>
       </excludes>
     </fileSet>
     <fileSet>

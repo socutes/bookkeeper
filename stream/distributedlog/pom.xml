@@ -20,7 +20,7 @@
   <parent>
     <groupId>org.apache.bookkeeper</groupId>
     <artifactId>bookkeeper</artifactId>
-    <version>4.15.0-SNAPSHOT</version>
+    <version>4.18.0-SNAPSHOT</version>
     <relativePath>../..</relativePath>
   </parent>
   <groupId>org.apache.distributedlog</groupId>
@@ -37,15 +37,18 @@
     <module>core</module>
     <module>io</module>
   </modules>
+  <properties>
+    <spotbugs-annotations.version>4.6.0</spotbugs-annotations.version>
+  </properties>
   <build>
     <plugins>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-javadoc-plugin</artifactId>
-        <version>${maven-javadoc-plugin.version}</version>
         <configuration>
+          <sourcepath>${src.dir}</sourcepath>
+          <notimestamp>true</notimestamp>
           <!-- Avoid for missing javadoc comments to be marked as errors -->
-          <additionalparam>-notimestamp</additionalparam>
           <doclint>none</doclint>
           <groups>
             <group>
@@ -70,11 +73,11 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
-        <version>${maven-surefire-plugin.version}</version>
         <configuration>
           <redirectTestOutputToFile>${redirectTestOutputToFile}</redirectTestOutputToFile>
-          <argLine>-Xmx3G -Djava.net.preferIPv4Stack=true -XX:MaxDirectMemorySize=2G -Dio.netty.leakDetection.level=PARANOID</argLine>
-          <forkMode>always</forkMode>
+          <argLine>-Xmx3G -Djava.net.preferIPv4Stack=true -XX:MaxDirectMemorySize=2G -Dio.netty.leakDetection.level=PARANOID ${test.additional.args}</argLine>
+          <forkCount>1</forkCount>
+          <reuseForks>false</reuseForks>
           <forkedProcessTimeoutInSeconds>1800</forkedProcessTimeoutInSeconds>
         </configuration>
       </plugin>
@@ -87,5 +90,16 @@
       </plugin>
     </plugins>
   </build>
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>com.github.spotbugs</groupId>
+        <artifactId>spotbugs-annotations</artifactId>
+        <version>${spotbugs-annotations.version}</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+  <dependencies>
+  </dependencies>
 </project>
 

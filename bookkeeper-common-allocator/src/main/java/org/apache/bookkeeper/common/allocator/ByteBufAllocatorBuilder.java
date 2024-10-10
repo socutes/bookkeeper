@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -20,9 +20,7 @@ package org.apache.bookkeeper.common.allocator;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.buffer.PooledByteBufAllocator;
 import io.netty.buffer.UnpooledByteBufAllocator;
-
 import java.util.function.Consumer;
-
 import org.apache.bookkeeper.common.allocator.impl.ByteBufAllocatorBuilderImpl;
 
 /**
@@ -39,7 +37,7 @@ public interface ByteBufAllocatorBuilder {
     /**
      * Finalize the configured {@link ByteBufAllocator}.
      */
-    ByteBufAllocator build();
+    ByteBufAllocatorWithOomHandler build();
 
     /**
      * Specify a custom allocator where the allocation requests should be
@@ -94,4 +92,6 @@ public interface ByteBufAllocatorBuilder {
      * <p>Default is {@link LeakDetectionPolicy#Disabled}
      */
     ByteBufAllocatorBuilder leakDetectionPolicy(LeakDetectionPolicy leakDetectionPolicy);
+
+    ByteBufAllocatorBuilder exitOnOutOfMemory(boolean exitOnOutOfMemory);
 }

@@ -22,7 +22,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
-
 import org.apache.bookkeeper.stats.codahale.CodahaleMetricsProvider;
 import org.apache.bookkeeper.stats.codahale.FastCodahaleMetricsProvider;
 import org.apache.bookkeeper.stats.prometheus.PrometheusMetricsProvider;
@@ -56,9 +55,12 @@ public class StatsLoggerBenchmark {
         providers.put("FastCodahale", FastCodahaleMetricsProvider::new);
     }
 
+    /**
+     * State holder of the logger.
+     */
     @State(Scope.Benchmark)
     public static class LoggerState {
-        @Param({ "Prometheus", "Codahale", "FastCodahale", "Twitter", "Ostrich" })
+        @Param({"Prometheus", "Codahale", "FastCodahale", "Twitter", "Ostrich"})
         private String statsProvider;
 
         private Counter counter;
@@ -75,7 +77,7 @@ public class StatsLoggerBenchmark {
         }
     }
 
-     @Benchmark
+    @Benchmark
     public void counterIncrement(LoggerState s) {
         s.counter.inc();
     }

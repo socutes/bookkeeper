@@ -32,11 +32,13 @@ import static org.mockito.Mockito.when;
 import com.google.protobuf.ByteString;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
+import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelPromise;
 import io.netty.channel.DefaultChannelPromise;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
 import org.apache.bookkeeper.bookie.Bookie;
+import org.apache.bookkeeper.bookie.BookieException;
 import org.apache.bookkeeper.proto.BookkeeperInternalCallbacks.WriteCallback;
 import org.apache.bookkeeper.proto.BookkeeperProtocol.AddRequest;
 import org.apache.bookkeeper.proto.BookkeeperProtocol.BKPacketHeader;
@@ -56,7 +58,9 @@ public class WriteEntryProcessorV3Test {
 
     private Request request;
     private WriteEntryProcessorV3 processor;
+
     private Channel channel;
+    private BookieRequestHandler requestHandler;
     private BookieRequestProcessor requestProcessor;
     private Bookie bookie;
 
@@ -76,14 +80,22 @@ public class WriteEntryProcessorV3Test {
                 .build())
             .build();
         channel = mock(Channel.class);
+        when(channel.isOpen()).thenReturn(true);
+
+        requestHandler = mock(BookieRequestHandler.class);
+        ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+        when(ctx.channel()).thenReturn(channel);
+        when(requestHandler.ctx()).thenReturn(ctx);
+
         bookie = mock(Bookie.class);
         requestProcessor = mock(BookieRequestProcessor.class);
         when(requestProcessor.getBookie()).thenReturn(bookie);
         when(requestProcessor.getWaitTimeoutOnBackpressureMillis()).thenReturn(-1L);
         when(requestProcessor.getRequestStats()).thenReturn(new RequestStats(NullStatsLogger.INSTANCE));
+        when(channel.isActive()).thenReturn(true);
         processor = new WriteEntryProcessorV3(
             request,
-            channel,
+            requestHandler,
             requestProcessor);
     }
 
@@ -96,7 +108,7 @@ public class WriteEntryProcessorV3Test {
 
         processor = new WriteEntryProcessorV3(
             request,
-            channel,
+            requestHandler,
             requestProcessor);
     }
 
@@ -241,7 +253,38 @@ public class WriteEntryProcessorV3Test {
     }
 
     @Test
-    public void testWritesWithClientNotAcceptingReponses() throws Exception {
+    public void testWritesCacheFlushTimeout() throws Exception {
+        when(bookie.isReadOnly()).thenReturn(false);
+        when(channel.voidPromise()).thenReturn(mock(ChannelPromise.class));
+        when(channel.writeAndFlush(any())).thenReturn(mock(ChannelPromise.class));
+        doAnswer(invocationOnMock -> {
+            throw new BookieException.OperationRejectedException();
+        }).when(bookie).addEntry(
+                any(ByteBuf.class), eq(false), any(WriteCallback.class), same(channel), eq(new byte[0]));
+
+        ChannelPromise promise = new DefaultChannelPromise(channel);
+        AtomicReference<Object> writtenObject = new AtomicReference<>();
+        CountDownLatch latch = new CountDownLatch(1);
+        doAnswer(invocationOnMock -> {
+            writtenObject.set(invocationOnMock.getArgument(0));
+            latch.countDown();
+            return promise;
+        }).when(channel).writeAndFlush(any());
+
+        processor.run();
+
+        verify(bookie, times(1))
+                .addEntry(any(ByteBuf.class), eq(false), any(WriteCallback.class), same(channel), eq(new byte[0]));
+        verify(channel, times(1)).writeAndFlush(any(Response.class));
+
+        latch.await();
+        assertTrue(writtenObject.get() instanceof Response);
+        Response response = (Response) writtenObject.get();
+        assertEquals(StatusCode.ETOOMANYREQUESTS, response.getStatus());
+    }
+
+    @Test
+    public void testWritesWithClientNotAcceptingResponses() throws Exception {
         when(requestProcessor.getWaitTimeoutOnBackpressureMillis()).thenReturn(5L);
 
         doAnswer(invocationOnMock -> {

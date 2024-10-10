@@ -37,7 +37,6 @@ import org.apache.bookkeeper.client.SyncCallbackUtils.SyncAddCallback;
 import org.apache.bookkeeper.client.api.LedgerMetadata;
 import org.apache.bookkeeper.client.api.WriteAdvHandle;
 import org.apache.bookkeeper.client.api.WriteFlag;
-import org.apache.bookkeeper.util.SafeRunnable;
 import org.apache.bookkeeper.versioning.Versioned;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -189,7 +188,7 @@ public class LedgerHandleAdv extends LedgerHandle implements WriteAdvHandle {
     /**
      * Add entry asynchronously to an open ledger, using an offset and range.
      * This can be used only with {@link LedgerHandleAdv} returned through
-     * ledgers created with {@link createLedgerAdv(int, int, int, DigestType, byte[])}.
+     * ledgers created with {@link BookKeeper#createLedgerAdv(int, int, int, BookKeeper.DigestType, byte[])}.
      *
      * @param entryId
      *            entryId of the entry to add.
@@ -243,12 +242,13 @@ public class LedgerHandleAdv extends LedgerHandle implements WriteAdvHandle {
         if (wasClosed) {
             // make sure the callback is triggered in main worker pool
             try {
-                clientCtx.getMainWorkerPool().submit(new SafeRunnable() {
+                clientCtx.getMainWorkerPool().submit(new Runnable() {
                     @Override
-                    public void safeRun() {
+                    public void run() {
                         LOG.warn("Attempt to add to closed ledger: {}", ledgerId);
                         op.cb.addCompleteWithLatency(BKException.Code.LedgerClosedException,
                                 LedgerHandleAdv.this, op.getEntryId(), 0, op.ctx);
+                        op.recyclePendAddOpObject();
                     }
                     @Override
                     public String toString() {
@@ -259,22 +259,23 @@ public class LedgerHandleAdv extends LedgerHandle implements WriteAdvHandle {
                 op.cb.addCompleteWithLatency(BookKeeper.getReturnRc(clientCtx.getBookieClient(),
                                                                     BKException.Code.InterruptedException),
                         LedgerHandleAdv.this, op.getEntryId(), 0, op.ctx);
+                op.recyclePendAddOpObject();
             }
             return;
         }
 
-        if (!waitForWritable(distributionSchedule.getWriteSet(op.getEntryId()),
-                    0, clientCtx.getConf().waitForWriteSetMs)) {
-            op.allowFailFastOnUnwritableChannel();
+        if (clientCtx.getConf().waitForWriteSetMs >= 0) {
+            DistributionSchedule.WriteSet ws = distributionSchedule.getWriteSet(op.getEntryId());
+            try {
+                if (!waitForWritable(ws, 0, clientCtx.getConf().waitForWriteSetMs)) {
+                    op.allowFailFastOnUnwritableChannel();
+                }
+            } finally {
+                ws.recycle();
+            }
         }
 
-        try {
-            clientCtx.getMainWorkerPool().executeOrdered(ledgerId, op);
-        } catch (RejectedExecutionException e) {
-            op.cb.addCompleteWithLatency(BookKeeper.getReturnRc(clientCtx.getBookieClient(),
-                                                                BKException.Code.InterruptedException),
-                              LedgerHandleAdv.this, op.getEntryId(), 0, op.ctx);
-        }
+        op.initiate();
     }
 
     @Override

@@ -30,7 +30,6 @@ import java.util.Collections;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-
 import org.apache.bookkeeper.bookie.LedgerDirsManager.LedgerDirsListener;
 import org.apache.bookkeeper.bookie.LedgerDirsManager.NoWritableLedgerDirException;
 import org.apache.bookkeeper.client.BookKeeper.DigestType;
@@ -145,9 +144,9 @@ public class BookieStorageThresholdTest extends BookKeeperClusterTestCase {
     public void testStorageThresholdCompaction() throws Exception {
         stopAllBookies();
         ServerConfiguration conf = newServerConfiguration();
-        File ledgerDir1 = createTempDir("ledger", "test1");
-        File ledgerDir2 = createTempDir("ledger", "test2");
-        File journalDir = createTempDir("journal", "test");
+        File ledgerDir1 = tmpDirs.createNew("ledger", "test1");
+        File ledgerDir2 = tmpDirs.createNew("ledger", "test2");
+        File journalDir = tmpDirs.createNew("journal", "test");
         String[] ledgerDirNames = new String[]{
             ledgerDir1.getPath(),
             ledgerDir2.getPath()

@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -21,6 +21,7 @@ import com.google.common.annotations.VisibleForTesting;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufInputStream;
 import io.netty.buffer.Unpooled;
+import io.netty.util.ReferenceCountUtil;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -225,7 +226,7 @@ public class LogRecord {
 
     void setPayloadBuf(ByteBuf payload, boolean copyData) {
         if (null != this.payload) {
-            this.payload.release();
+            ReferenceCountUtil.release(this.payload);
         }
         if (copyData) {
             this.payload = Unpooled.copiedBuffer(payload);
@@ -508,7 +509,7 @@ public class LogRecord {
                 try {
                     long metadata = in.readLong();
                     // Reading the first 8 bytes positions the record stream on the correct log record
-                    // By this time all components of the DLSN are valid so this is where we shoud
+                    // By this time all components of the DLSN are valid so this is where we should
                     // retrieve the currentDLSN and advance to the next
                     // Given that there are 20 bytes following the read position of the previous call
                     // to readLong, we should not have moved ahead in the stream.
@@ -638,7 +639,9 @@ public class LogRecord {
                         recordStream.advance(1);
                     }
                 } catch (EOFException eof) {
-                    LOG.debug("Skip encountered end of file Exception", eof);
+                    if (LOG.isDebugEnabled()) {
+                        LOG.debug("Skip encountered end of file Exception", eof);
+                    }
                     break;
                 }
             }

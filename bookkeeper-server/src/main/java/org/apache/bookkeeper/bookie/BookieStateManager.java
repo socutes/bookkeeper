@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -23,7 +23,9 @@ package org.apache.bookkeeper.bookie;
 
 import static org.apache.bookkeeper.bookie.BookKeeperServerStats.BOOKIE_SCOPE;
 import static org.apache.bookkeeper.bookie.BookKeeperServerStats.CATEGORY_SERVER;
+import static org.apache.bookkeeper.bookie.BookKeeperServerStats.SERVER_SANITY;
 import static org.apache.bookkeeper.bookie.BookKeeperServerStats.SERVER_STATUS;
+
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import java.io.File;
@@ -32,24 +34,27 @@ import java.io.UncheckedIOException;
 import java.net.UnknownHostException;
 import java.util.List;
 import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.bookkeeper.conf.ServerConfiguration;
 import org.apache.bookkeeper.discover.BookieServiceInfo;
 import org.apache.bookkeeper.discover.RegistrationManager;
-import org.apache.bookkeeper.meta.MetadataBookieDriver;
 import org.apache.bookkeeper.net.BookieId;
 import org.apache.bookkeeper.stats.Gauge;
 import org.apache.bookkeeper.stats.NullStatsLogger;
 import org.apache.bookkeeper.stats.StatsLogger;
 import org.apache.bookkeeper.stats.annotations.StatsDoc;
+import org.apache.bookkeeper.tools.cli.commands.bookie.SanityTestCommand;
 import org.apache.bookkeeper.util.DiskChecker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 
 /**
  * An implementation of StateManager.
@@ -67,7 +72,7 @@ public class BookieStateManager implements StateManager {
     private final List<File> statusDirs;
 
     // use an executor to execute the state changes task
-    final ExecutorService stateService = Executors.newSingleThreadExecutor(
+    final ScheduledExecutorService stateService = Executors.newScheduledThreadPool(1,
             new ThreadFactoryBuilder().setNameFormat("BookieStateManagerService-%d").build());
 
     // Running flag
@@ -78,27 +83,33 @@ public class BookieStateManager implements StateManager {
     private final BookieStatus bookieStatus = new BookieStatus();
     private final AtomicBoolean rmRegistered = new AtomicBoolean(false);
     private final AtomicBoolean forceReadOnly = new AtomicBoolean(false);
+    private final AtomicInteger sanityPassed = new AtomicInteger(-1);
     private volatile boolean availableForHighPriorityWrites = true;
 
-    private final BookieId bookieId;
+    private final Supplier<BookieId> bookieIdSupplier;
     private ShutdownHandler shutdownHandler;
-    private final Supplier<RegistrationManager> rm;
+    private final RegistrationManager rm;
     // Expose Stats
     @StatsDoc(
         name = SERVER_STATUS,
         help = "Bookie status (1: up, 0: readonly, -1: unregistered)"
     )
     private final Gauge<Number> serverStatusGauge;
+    @StatsDoc(
+        name = SERVER_SANITY,
+        help = "Bookie sanity (1: up, 0: down, -1: unknown)"
+    )
+    private final Gauge<Number> serverSanityGauge;
 
     public BookieStateManager(ServerConfiguration conf,
                               StatsLogger statsLogger,
-                              MetadataBookieDriver metadataDriver,
+                              RegistrationManager rm,
                               LedgerDirsManager ledgerDirsManager,
                               Supplier<BookieServiceInfo> bookieServiceInfoProvider) throws IOException {
         this(
             conf,
             statsLogger,
-            () -> null == metadataDriver ? null : metadataDriver.getRegistrationManager(),
+            rm,
             ledgerDirsManager.getAllLedgerDirs(),
             () -> {
                 try {
@@ -111,15 +122,24 @@ public class BookieStateManager implements StateManager {
     }
     public BookieStateManager(ServerConfiguration conf,
                               StatsLogger statsLogger,
-                              Supplier<RegistrationManager> rm,
+                              RegistrationManager rm,
                               List<File> statusDirs,
                               Supplier<BookieId> bookieIdSupplier,
                               Supplier<BookieServiceInfo> bookieServiceInfoProvider) throws IOException {
         this.conf = conf;
         this.rm = rm;
+        if (this.rm != null) {
+            rm.addRegistrationListener(() -> {
+                log.info("Trying to re-register the bookie");
+                forceToUnregistered();
+                // schedule a re-register operation
+                registerBookie(false);
+            });
+        }
+
         this.statusDirs = statusDirs;
         // ZK ephemeral node for this Bookie.
-        this.bookieId = bookieIdSupplier.get();
+        this.bookieIdSupplier = bookieIdSupplier;
         this.bookieServiceInfoProvider = bookieServiceInfoProvider;
         // 1 : up, 0 : readonly, -1 : unregistered
         this.serverStatusGauge = new Gauge<Number>() {
@@ -140,15 +160,41 @@ public class BookieStateManager implements StateManager {
             }
         };
         statsLogger.registerGauge(SERVER_STATUS, serverStatusGauge);
+        this.serverSanityGauge = new Gauge<Number>() {
+            @Override
+            public Number getDefaultValue() {
+                return -1;
+            }
+
+            @Override
+            public Number getSample() {
+                return sanityPassed.get();
+            }
+        };
+        if (conf.isSanityCheckMetricsEnabled()) {
+            statsLogger.registerGauge(SERVER_SANITY, serverSanityGauge);
+            stateService.scheduleAtFixedRate(() -> {
+                if (isReadOnly()) {
+                    sanityPassed.set(1);
+                    return;
+                }
+                SanityTestCommand.handleAsync(conf, new SanityTestCommand.SanityFlags()).thenAccept(__ -> {
+                    sanityPassed.set(1);
+                }).exceptionally(ex -> {
+                    sanityPassed.set(0);
+                    return null;
+                });
+            }, 60, 60, TimeUnit.SECONDS);
+        }
     }
 
     private boolean isRegistrationManagerDisabled() {
-        return null == rm || null == rm.get();
+        return null == rm;
     }
 
     @VisibleForTesting
-    BookieStateManager(ServerConfiguration conf, MetadataBookieDriver metadataDriver) throws IOException {
-        this(conf, NullStatsLogger.INSTANCE, metadataDriver, new LedgerDirsManager(conf, conf.getLedgerDirs(),
+    BookieStateManager(ServerConfiguration conf, RegistrationManager registrationManager) throws IOException {
+        this(conf, NullStatsLogger.INSTANCE, registrationManager, new LedgerDirsManager(conf, conf.getLedgerDirs(),
                 new DiskChecker(conf.getDiskUsageThreshold(), conf.getDiskUsageWarnThreshold()),
                 NullStatsLogger.INSTANCE), BookieServiceInfo.NO_INFO);
     }
@@ -182,6 +228,16 @@ public class BookieStateManager implements StateManager {
     @Override
     public boolean isReadOnly(){
         return forceReadOnly.get() || bookieStatus.isInReadOnlyMode();
+    }
+
+    @Override
+    public boolean isForceReadOnly(){
+        return forceReadOnly.get();
+    }
+
+    @Override
+    public boolean isReadOnlyModeEnabled() {
+        return conf.isReadOnlyModeEnabled();
     }
 
     @Override
@@ -221,6 +277,7 @@ public class BookieStateManager implements StateManager {
             @Override
             public Void call() throws IOException {
                 try {
+                    log.info("Re-registering the bookie");
                     doRegisterBookie();
                 } catch (IOException ioe) {
                     if (throwException) {
@@ -270,7 +327,7 @@ public class BookieStateManager implements StateManager {
 
         rmRegistered.set(false);
         try {
-            rm.get().registerBookie(bookieId, isReadOnly, bookieServiceInfoProvider.get());
+            rm.registerBookie(bookieIdSupplier.get(), isReadOnly, bookieServiceInfoProvider.get());
             rmRegistered.set(true);
         } catch (BookieException e) {
             throw new IOException(e);
@@ -304,7 +361,7 @@ public class BookieStateManager implements StateManager {
         }
         // clear the readonly state
         try {
-            rm.get().unregisterBookie(bookieId, true);
+            rm.unregisterBookie(bookieIdSupplier.get(), true);
         } catch (BookieException e) {
             // if we failed when deleting the readonly flag in zookeeper, it is OK since client would
             // already see the bookie in writable list. so just log the exception
@@ -340,7 +397,7 @@ public class BookieStateManager implements StateManager {
             return;
         }
         try {
-            rm.get().registerBookie(bookieId, true, bookieServiceInfoProvider.get());
+            rm.registerBookie(bookieIdSupplier.get(), true, bookieServiceInfoProvider.get());
         } catch (BookieException e) {
             LOG.error("Error in transition to ReadOnly Mode."
                     + " Shutting down", e);

@@ -27,6 +27,7 @@ import static org.mockito.Mockito.spy;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+import io.netty.util.ReferenceCountUtil;
 import java.io.File;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadLocalRandom;
@@ -69,7 +70,7 @@ public class CheckpointOnNewLedgersTest {
         conf.setLedgerDirNames(new String[] { bkDir.toString() });
         conf.setEntryLogSizeLimit(10 * 1024);
 
-        bookie = spy(new BookieImpl(conf));
+        bookie = spy(new TestBookieImpl(conf));
         bookie.start();
 
         getLedgerDescCalledLatch = new CountDownLatch(1);
@@ -175,7 +176,7 @@ public class CheckpointOnNewLedgersTest {
         t1.join();
 
         // construct a new bookie to simulate "bookie restart from crash"
-        Bookie newBookie = new BookieImpl(conf);
+        Bookie newBookie = new TestBookieImpl(conf);
         newBookie.start();
 
         for (int i = 0; i < numEntries; i++) {
@@ -183,14 +184,14 @@ public class CheckpointOnNewLedgersTest {
             assertNotNull(entry);
             assertEquals(l2, entry.readLong());
             assertEquals((long) i, entry.readLong());
-            entry.release();
+            ReferenceCountUtil.release(entry);
         }
 
         ByteBuf entry = newBookie.readEntry(l1, 0L);
         assertNotNull(entry);
         assertEquals(l1, entry.readLong());
         assertEquals(0L, entry.readLong());
-        entry.release();
+        ReferenceCountUtil.release(entry);
         newBookie.shutdown();
     }
 

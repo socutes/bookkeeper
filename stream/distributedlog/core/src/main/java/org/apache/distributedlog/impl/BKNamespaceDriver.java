@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -533,8 +533,7 @@ public class BKNamespaceDriver implements NamespaceDriver {
         String namespaceRootPath = namespace.getPath();
         HashMap<String, byte[]> result = new HashMap<String, byte[]>();
         ZooKeeperClient zkc = writerZKC;
-        try {
-            ZooKeeper zk = Utils.sync(zkc, namespaceRootPath);
+        try (ZooKeeper zk = Utils.sync(zkc, namespaceRootPath)) {
             Stat currentStat = zk.exists(namespaceRootPath, false);
             if (currentStat == null) {
                 return result;

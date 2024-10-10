@@ -25,9 +25,9 @@ import java.net.NetworkInterface;
 import java.net.SocketException;
 import java.util.Collections;
 import java.util.Enumeration;
-
 import org.apache.bookkeeper.bookie.storage.ldb.DbLedgerStorage;
 import org.apache.bookkeeper.common.allocator.PoolingPolicy;
+import org.apache.bookkeeper.util.PortManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -51,14 +51,18 @@ public class TestBKConfiguration {
         confReturn.setJournalFlushWhenQueueEmpty(true);
         // enable journal format version
         confReturn.setJournalFormatVersionToWrite(5);
-        confReturn.setAllowEphemeralPorts(true);
-        confReturn.setBookiePort(0);
+        confReturn.setAllowEphemeralPorts(false);
+        confReturn.setBookiePort(PortManager.nextFreePort());
         confReturn.setGcWaitTime(1000);
         confReturn.setDiskUsageThreshold(0.999f);
         confReturn.setDiskUsageWarnThreshold(0.99f);
         confReturn.setAllocatorPoolingPolicy(PoolingPolicy.UnpooledHeap);
         confReturn.setProperty(DbLedgerStorage.WRITE_CACHE_MAX_SIZE_MB, 4);
         confReturn.setProperty(DbLedgerStorage.READ_AHEAD_CACHE_MAX_SIZE_MB, 4);
+        /**
+         * if testcase has zk error,just try 0 time for fast running
+         */
+        confReturn.setZkRetryBackoffMaxRetries(0);
         setLoopbackInterfaceAndAllowLoopback(confReturn);
         return confReturn;
     }
@@ -88,6 +92,8 @@ public class TestBKConfiguration {
     public static ClientConfiguration newClientConfiguration() {
         ClientConfiguration clientConfiguration = new ClientConfiguration();
         clientConfiguration.setTLSEnabledProtocols("TLSv1.2,TLSv1.1");
+        // if testcase has zk error,just try 0 time for fast running
+        clientConfiguration.setZkRetryBackoffMaxRetries(0);
         return clientConfiguration;
     }
 }

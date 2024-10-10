@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -73,7 +73,9 @@ public class BKDLConfig implements DLConfig {
                 dlConfig = oldDLConfig;
             }
         }
-        assert (dlConfig instanceof BKDLConfig);
+        if (!(dlConfig instanceof BKDLConfig)) {
+            throw new IllegalStateException("Invalid DLConfig type : " + dlConfig.getClass().getName());
+        }
         return (BKDLConfig) dlConfig;
     }
 

@@ -23,8 +23,10 @@ package org.apache.bookkeeper.client;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+import io.netty.util.ReferenceCounted;
 import java.io.IOException;
 import java.util.Enumeration;
 import java.util.concurrent.CompletableFuture;
@@ -37,8 +39,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import org.apache.bookkeeper.bookie.BookieException;
-import org.apache.bookkeeper.bookie.BookieImpl;
 import org.apache.bookkeeper.bookie.InterleavedLedgerStorage;
+import org.apache.bookkeeper.bookie.TestBookieImpl;
 import org.apache.bookkeeper.client.BookKeeper.DigestType;
 import org.apache.bookkeeper.client.api.LedgerMetadata;
 import org.apache.bookkeeper.client.api.WriteFlag;
@@ -60,12 +62,10 @@ import org.apache.bookkeeper.proto.BookkeeperInternalCallbacks.Processor;
 import org.apache.bookkeeper.proto.BookkeeperInternalCallbacks.WriteCallback;
 import org.apache.bookkeeper.proto.checksum.DigestManager;
 import org.apache.bookkeeper.test.BookKeeperClusterTestCase;
-import org.apache.bookkeeper.util.ByteBufList;
 import org.apache.bookkeeper.versioning.Version;
 import org.apache.bookkeeper.versioning.Versioned;
 import org.apache.commons.lang3.mutable.MutableInt;
 import org.apache.zookeeper.AsyncCallback.VoidCallback;
-import org.apache.zookeeper.KeeperException;
 import org.junit.After;
 import org.junit.Test;
 import org.slf4j.Logger;
@@ -338,7 +338,7 @@ public class ParallelLedgerRecoveryTest extends BookKeeperClusterTestCase {
 
         LOG.info("Added {} entries to ledger {}.", numEntries, lh.getId());
 
-        long ledgerLenth = lh.getLength();
+        long ledgerLength = lh.getLength();
 
         LedgerHandle recoverLh = newBk.openLedgerNoRecovery(lh.getId(), digestType, "".getBytes());
         assertEquals(BookieProtocol.INVALID_ENTRY_ID, recoverLh.getLastAddPushed());
@@ -395,7 +395,7 @@ public class ParallelLedgerRecoveryTest extends BookKeeperClusterTestCase {
         assertTrue(success.get());
         assertEquals(numEntries - 1, recoverLh.getLastAddPushed());
         assertEquals(numEntries - 1, recoverLh.getLastAddConfirmed());
-        assertEquals(ledgerLenth, recoverLh.getLength());
+        assertEquals(ledgerLength, recoverLh.getLength());
         assertTrue(recoverLh.getLedgerMetadata().isClosed());
 
         Enumeration<LedgerEntry> enumeration = recoverLh.readEntries(0, numEntries - 1);
@@ -425,9 +425,10 @@ public class ParallelLedgerRecoveryTest extends BookKeeperClusterTestCase {
         long entryId = 14;
         long lac = 8;
         byte[] data = "recovery-on-entry-gap-gap".getBytes(UTF_8);
-        ByteBufList toSend =
+        ReferenceCounted toSend =
                 lh.macManager.computeDigestAndPackageForSending(
-                        entryId, lac, lh.getLength() + 100, Unpooled.wrappedBuffer(data, 0, data.length));
+                        entryId, lac, lh.getLength() + 100, Unpooled.wrappedBuffer(data, 0, data.length),
+                        new byte[20], 0);
         final CountDownLatch addLatch = new CountDownLatch(1);
         final AtomicBoolean addSuccess = new AtomicBoolean(false);
         LOG.info("Add entry {} with lac = {}", entryId, lac);
@@ -483,7 +484,7 @@ public class ParallelLedgerRecoveryTest extends BookKeeperClusterTestCase {
         assertEquals("recovery callback should be triggered only once", 0, numFailureCalls.get());
     }
 
-    static class DelayResponseBookie extends BookieImpl {
+    static class DelayResponseBookie extends TestBookieImpl {
 
         static final class WriteCallbackEntry {
 
@@ -518,7 +519,7 @@ public class ParallelLedgerRecoveryTest extends BookKeeperClusterTestCase {
                 new LinkedBlockingQueue<WriteCallbackEntry>();
 
         public DelayResponseBookie(ServerConfiguration conf)
-                throws IOException, KeeperException, InterruptedException, BookieException {
+                throws Exception {
             super(conf);
         }
 
@@ -539,7 +540,7 @@ public class ParallelLedgerRecoveryTest extends BookKeeperClusterTestCase {
         }
 
         @Override
-        public ByteBuf readEntry(long ledgerId, long entryId) throws IOException, NoLedgerException {
+        public ByteBuf readEntry(long ledgerId, long entryId) throws IOException, NoLedgerException, BookieException {
             LOG.info("ReadEntry {} - {}", ledgerId, entryId);
             if (delayReadResponse.get() && delayReadOnEntry.get() == entryId) {
                 CountDownLatch latch = delayReadLatch;

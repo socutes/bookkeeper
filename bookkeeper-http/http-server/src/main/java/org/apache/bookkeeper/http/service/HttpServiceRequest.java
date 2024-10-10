@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -22,7 +22,6 @@ package org.apache.bookkeeper.http.service;
 
 import java.util.HashMap;
 import java.util.Map;
-
 import org.apache.bookkeeper.http.HttpServer;
 
 /**
@@ -67,5 +66,10 @@ public class HttpServiceRequest {
     public HttpServiceRequest setParams(Map<String, String> params) {
         this.params = params;
         return this;
+    }
+
+    @Override
+    public String toString() {
+        return "HttpServiceRequest{" + "body=" + body + ", method=" + method + ", params=" + params + '}';
     }
 }

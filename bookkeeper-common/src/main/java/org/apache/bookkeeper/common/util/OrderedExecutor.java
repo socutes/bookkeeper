@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -23,45 +23,33 @@ import com.google.common.util.concurrent.ForwardingExecutorService;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
-
 import io.netty.util.concurrent.DefaultThreadFactory;
-
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
-import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
-
 import lombok.extern.slf4j.Slf4j;
-
-import org.apache.bookkeeper.common.collections.BlockingMpscQueue;
 import org.apache.bookkeeper.common.util.affinity.CpuAffinity;
 import org.apache.bookkeeper.stats.Gauge;
 import org.apache.bookkeeper.stats.NullStatsLogger;
 import org.apache.bookkeeper.stats.OpStatsLogger;
 import org.apache.bookkeeper.stats.StatsLogger;
+import org.apache.bookkeeper.stats.ThreadRegistry;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.MDC;
 
 /**
- * This class provides 2 things over the java {@link ExecutorService}.
- *
- * <p>1. It takes {@link SafeRunnable objects} instead of plain Runnable objects.
- * This means that exceptions in scheduled tasks wont go unnoticed and will be
- * logged.
- *
- * <p>2. It supports submitting tasks with an ordering key, so that tasks submitted
+ * This class supports submitting tasks with an ordering key, so that tasks submitted
  * with the same key will always be executed in order, but tasks across
  * different keys can be unordered. This retains parallelism while retaining the
  * basic amount of ordering we want (e.g. , per ledger handle). Ordering is
@@ -85,6 +73,8 @@ public class OrderedExecutor implements ExecutorService {
     final long warnTimeMicroSec;
     final int maxTasksInQueue;
     final boolean enableBusyWait;
+    // we only want thread-scoped metrics on the server-side where it can be explicitly enabled
+    final boolean enableThreadScopedMetrics;
 
     public static Builder newBuilder() {
         return new Builder();
@@ -102,7 +92,8 @@ public class OrderedExecutor implements ExecutorService {
             }
             return new OrderedExecutor(name, numThreads, threadFactory, statsLogger,
                                            traceTaskExecution, preserveMdcForTaskExecution,
-                                           warnTimeMicroSec, maxTasksInQueue, enableBusyWait);
+                                           warnTimeMicroSec, maxTasksInQueue, enableBusyWait,
+                                           enableThreadScopedMetrics);
         }
     }
 
@@ -119,6 +110,7 @@ public class OrderedExecutor implements ExecutorService {
         protected long warnTimeMicroSec = WARN_TIME_MICRO_SEC_DEFAULT;
         protected int maxTasksInQueue = NO_TASK_LIMIT;
         protected boolean enableBusyWait = false;
+        protected boolean enableThreadScopedMetrics = false;
 
         public AbstractBuilder<T> name(String name) {
             this.name = name;
@@ -165,6 +157,11 @@ public class OrderedExecutor implements ExecutorService {
             return this;
         }
 
+        public AbstractBuilder<T> enableThreadScopedMetrics(boolean enableThreadScopedMetrics) {
+            this.enableThreadScopedMetrics = enableThreadScopedMetrics;
+            return this;
+        }
+
         @SuppressWarnings("unchecked")
         public T build() {
             if (null == threadFactory) {
@@ -179,7 +176,8 @@ public class OrderedExecutor implements ExecutorService {
                 preserveMdcForTaskExecution,
                 warnTimeMicroSec,
                 maxTasksInQueue,
-                enableBusyWait);
+                enableBusyWait,
+                enableThreadScopedMetrics);
         }
     }
 
@@ -189,10 +187,12 @@ public class OrderedExecutor implements ExecutorService {
     protected class TimedRunnable implements Runnable {
         final Runnable runnable;
         final long initNanos;
+        final Class<?> runnableClass;
 
         TimedRunnable(Runnable runnable) {
             this.runnable = runnable;
             this.initNanos = MathUtils.nowInNano();
+            this.runnableClass = runnable.getClass();
          }
 
         @Override
@@ -205,8 +205,7 @@ public class OrderedExecutor implements ExecutorService {
                 long elapsedMicroSec = MathUtils.elapsedMicroSec(startNanos);
                 taskExecutionStats.registerSuccessfulEvent(elapsedMicroSec, TimeUnit.MICROSECONDS);
                 if (elapsedMicroSec >= warnTimeMicroSec) {
-                    log.warn("Runnable {}:{} took too long {} micros to execute.", runnable, runnable.getClass(),
-                            elapsedMicroSec);
+                    log.warn("Runnable {} took too long {} micros to execute.", runnableClass, elapsedMicroSec);
                 }
             }
         }
@@ -218,10 +217,12 @@ public class OrderedExecutor implements ExecutorService {
     protected class TimedCallable<T> implements Callable<T> {
         final Callable<T> callable;
         final long initNanos;
+        final Class<?> callableClass;
 
         TimedCallable(Callable<T> callable) {
             this.callable = callable;
             this.initNanos = MathUtils.nowInNano();
+            this.callableClass = callable.getClass();
         }
 
         @Override
@@ -234,8 +235,7 @@ public class OrderedExecutor implements ExecutorService {
                 long elapsedMicroSec = MathUtils.elapsedMicroSec(startNanos);
                 taskExecutionStats.registerSuccessfulEvent(elapsedMicroSec, TimeUnit.MICROSECONDS);
                 if (elapsedMicroSec >= warnTimeMicroSec) {
-                    log.warn("Callable {}:{} took too long {} micros to execute.", callable, callable.getClass(),
-                            elapsedMicroSec);
+                    log.warn("Callable {} took too long {} micros to execute.", callableClass, elapsedMicroSec);
                 }
             }
         }
@@ -287,20 +287,17 @@ public class OrderedExecutor implements ExecutorService {
         }
     }
 
-    protected ThreadPoolExecutor createSingleThreadExecutor(ThreadFactory factory) {
-        BlockingQueue<Runnable> queue;
-        if (enableBusyWait) {
-            // Use queue with busy-wait polling strategy
-            queue = new BlockingMpscQueue<>(maxTasksInQueue > 0 ? maxTasksInQueue : DEFAULT_MAX_ARRAY_QUEUE_SIZE);
+    protected ExecutorService createSingleThreadExecutor(ThreadFactory factory) {
+        if (maxTasksInQueue > 0) {
+            return new SingleThreadExecutor(factory, maxTasksInQueue, true);
         } else {
-            // By default, use regular JDK LinkedBlockingQueue
-            queue = new LinkedBlockingQueue<>();
+            return new SingleThreadExecutor(factory);
         }
-        return new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS, queue, factory);
     }
 
-    protected ExecutorService getBoundedExecutor(ThreadPoolExecutor executor) {
-        return new BoundedExecutorService(executor, this.maxTasksInQueue);
+    protected ExecutorService getBoundedExecutor(ExecutorService executor) {
+        checkArgument(executor instanceof ThreadPoolExecutor);
+        return new BoundedExecutorService((ThreadPoolExecutor) executor, this.maxTasksInQueue);
     }
 
     protected ExecutorService addExecutorDecorators(ExecutorService executor) {
@@ -381,27 +378,39 @@ public class OrderedExecutor implements ExecutorService {
     protected OrderedExecutor(String baseName, int numThreads, ThreadFactory threadFactory,
                                 StatsLogger statsLogger, boolean traceTaskExecution,
                                 boolean preserveMdcForTaskExecution, long warnTimeMicroSec, int maxTasksInQueue,
-                                boolean enableBusyWait) {
+                                boolean enableBusyWait, boolean enableThreadScopedMetrics) {
         checkArgument(numThreads > 0);
         checkArgument(!StringUtils.isBlank(baseName));
 
         this.maxTasksInQueue = maxTasksInQueue;
         this.warnTimeMicroSec = warnTimeMicroSec;
         this.enableBusyWait = enableBusyWait;
+        this.enableThreadScopedMetrics = enableThreadScopedMetrics;
         name = baseName;
         threads = new ExecutorService[numThreads];
         threadIds = new long[numThreads];
         for (int i = 0; i < numThreads; i++) {
-            ThreadPoolExecutor thread = createSingleThreadExecutor(
+            ExecutorService thread = createSingleThreadExecutor(
                     new ThreadFactoryBuilder().setNameFormat(name + "-" + getClass().getSimpleName() + "-" + i + "-%d")
                     .setThreadFactory(threadFactory).build());
+            SingleThreadExecutor ste = null;
+            if (thread instanceof SingleThreadExecutor) {
+                ste = (SingleThreadExecutor) thread;
+            }
 
-            threads[i] = addExecutorDecorators(getBoundedExecutor(thread));
+            if (traceTaskExecution || preserveMdcForTaskExecution) {
+                thread = addExecutorDecorators(thread);
+            }
+            threads[i] = thread;
 
             final int idx = i;
             try {
                 threads[idx].submit(() -> {
                     threadIds[idx] = Thread.currentThread().getId();
+
+                    if (enableThreadScopedMetrics) {
+                        ThreadRegistry.register(baseName, idx);
+                    }
 
                     if (enableBusyWait) {
                         // Try to acquire 1 CPU core to the executor thread. If it fails we
@@ -410,7 +419,7 @@ public class OrderedExecutor implements ExecutorService {
                         try {
                             CpuAffinity.acquireCore();
                         } catch (Throwable t) {
-                            log.warn("Failed to acquire CPU core for thread {}", Thread.currentThread().getName(),
+                            log.warn("Failed to acquire CPU core for thread {}: {}", Thread.currentThread().getName(),
                                     t.getMessage(), t);
                         }
                     }
@@ -422,45 +431,42 @@ public class OrderedExecutor implements ExecutorService {
                 throw new RuntimeException("Couldn't start thread " + i, e);
             }
 
-            // Register gauges
-            statsLogger.registerGauge(String.format("%s-queue-%d", name, idx), new Gauge<Number>() {
-                @Override
-                public Number getDefaultValue() {
-                    return 0;
-                }
-
-                @Override
-                public Number getSample() {
-                    return thread.getQueue().size();
-                }
-            });
-            statsLogger.registerGauge(String.format("%s-completed-tasks-%d", name, idx), new Gauge<Number>() {
-                @Override
-                public Number getDefaultValue() {
-                    return 0;
-                }
-
-                @Override
-                public Number getSample() {
-                    return thread.getCompletedTaskCount();
-                }
-            });
-            statsLogger.registerGauge(String.format("%s-total-tasks-%d", name, idx), new Gauge<Number>() {
-                @Override
-                public Number getDefaultValue() {
-                    return 0;
-                }
-
-                @Override
-                public Number getSample() {
-                    return thread.getTaskCount();
-                }
-            });
+            if (ste != null) {
+                ste.registerMetrics(statsLogger);
+            }
         }
 
-        // Stats
-        this.taskExecutionStats = statsLogger.scope(name).getOpStatsLogger("task_execution");
-        this.taskPendingStats = statsLogger.scope(name).getOpStatsLogger("task_queued");
+        statsLogger.registerGauge(String.format("%s-threads", name), new Gauge<Number>() {
+            @Override
+            public Number getDefaultValue() {
+                return numThreads;
+            }
+
+            @Override
+            public Number getSample() {
+                return numThreads;
+            }
+        });
+
+        statsLogger.registerGauge(String.format("%s-max-queue-size", name), new Gauge<Number>() {
+            @Override
+            public Number getDefaultValue() {
+                return maxTasksInQueue;
+            }
+
+            @Override
+            public Number getSample() {
+                return maxTasksInQueue;
+            }
+        });
+
+        if (enableThreadScopedMetrics) {
+            this.taskExecutionStats = statsLogger.scope(name).getThreadScopedOpStatsLogger("task_execution");
+            this.taskPendingStats = statsLogger.scope(name).getThreadScopedOpStatsLogger("task_queued");
+        } else {
+            this.taskExecutionStats = statsLogger.scope(name).getOpStatsLogger("task_execution");
+            this.taskPendingStats = statsLogger.scope(name).getOpStatsLogger("task_queued");
+        }
         this.traceTaskExecution = traceTaskExecution;
         this.preserveMdcForTaskExecution = preserveMdcForTaskExecution;
     }
@@ -480,7 +486,7 @@ public class OrderedExecutor implements ExecutorService {
      * @param orderingKey
      * @param r
      */
-    public void executeOrdered(Object orderingKey, SafeRunnable r) {
+    public void executeOrdered(Object orderingKey, Runnable r) {
         chooseThread(orderingKey).execute(r);
     }
 
@@ -489,7 +495,7 @@ public class OrderedExecutor implements ExecutorService {
      * @param orderingKey
      * @param r
      */
-    public void executeOrdered(long orderingKey, SafeRunnable r) {
+    public void executeOrdered(long orderingKey, Runnable r) {
         chooseThread(orderingKey).execute(r);
     }
 
@@ -498,7 +504,7 @@ public class OrderedExecutor implements ExecutorService {
      * @param orderingKey
      * @param r
      */
-    public void executeOrdered(int orderingKey, SafeRunnable r) {
+    public void executeOrdered(int orderingKey, Runnable r) {
         chooseThread(orderingKey).execute(r);
     }
 
@@ -523,7 +529,7 @@ public class OrderedExecutor implements ExecutorService {
             return threadIds[0];
         }
 
-        return threadIds[MathUtils.signSafeMod(orderingKey, threadIds.length)];
+        return threadIds[chooseThreadIdx(orderingKey, threads.length)];
     }
 
     public ExecutorService chooseThread() {
@@ -544,7 +550,7 @@ public class OrderedExecutor implements ExecutorService {
         if (null == orderingKey) {
             return threads[rand.nextInt(threads.length)];
         } else {
-            return threads[MathUtils.signSafeMod(orderingKey.hashCode(), threads.length)];
+            return threads[chooseThreadIdx(orderingKey.hashCode(), threads.length)];
         }
     }
 
@@ -559,7 +565,11 @@ public class OrderedExecutor implements ExecutorService {
             return threads[0];
         }
 
-        return threads[MathUtils.signSafeMod(orderingKey, threads.length)];
+        return threads[chooseThreadIdx(orderingKey, threads.length)];
+    }
+
+    protected static int chooseThreadIdx(long orderingKey, int numThreads) {
+        return MathUtils.signSafeMod(orderingKey >>> 1, numThreads);
     }
 
     protected Runnable timedRunnable(Runnable r) {
@@ -586,7 +596,7 @@ public class OrderedExecutor implements ExecutorService {
      */
     @Override
     public <T> Future<T> submit(Callable<T> task) {
-        return chooseThread().submit(timedCallable(task));
+        return chooseThread().submit(task);
     }
 
     /**
@@ -611,7 +621,7 @@ public class OrderedExecutor implements ExecutorService {
     @Override
     public <T> List<Future<T>> invokeAll(Collection<? extends Callable<T>> tasks)
         throws InterruptedException {
-        return chooseThread().invokeAll(timedCallables(tasks));
+        return chooseThread().invokeAll(tasks);
     }
 
     /**
@@ -622,7 +632,7 @@ public class OrderedExecutor implements ExecutorService {
                                          long timeout,
                                          TimeUnit unit)
         throws InterruptedException {
-        return chooseThread().invokeAll(timedCallables(tasks), timeout, unit);
+        return chooseThread().invokeAll(tasks, timeout, unit);
     }
 
     /**
@@ -631,7 +641,7 @@ public class OrderedExecutor implements ExecutorService {
     @Override
     public <T> T invokeAny(Collection<? extends Callable<T>> tasks)
         throws InterruptedException, ExecutionException {
-        return chooseThread().invokeAny(timedCallables(tasks));
+        return chooseThread().invokeAny(tasks);
     }
 
     /**
@@ -640,7 +650,7 @@ public class OrderedExecutor implements ExecutorService {
     @Override
     public <T> T invokeAny(Collection<? extends Callable<T>> tasks, long timeout, TimeUnit unit)
         throws InterruptedException, ExecutionException, TimeoutException {
-        return chooseThread().invokeAny(timedCallables(tasks), timeout, unit);
+        return chooseThread().invokeAny(tasks, timeout, unit);
     }
 
     /**
@@ -648,7 +658,7 @@ public class OrderedExecutor implements ExecutorService {
      */
     @Override
     public void execute(Runnable command) {
-        chooseThread().execute(timedRunnable(command));
+        chooseThread().execute(command);
     }
 
 

@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -20,17 +20,15 @@
  */
 package org.apache.bookkeeper.common.util.affinity.impl;
 
-import static com.google.common.base.Preconditions.checkArgument;
-
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
-import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-
+import java.nio.file.Files;
+import java.nio.file.Path;
+import lombok.NonNull;
 import lombok.experimental.UtilityClass;
 
 /**
@@ -47,20 +45,20 @@ public class NativeUtils {
      * @throws Exception
      */
     @SuppressFBWarnings(
-            value = "OBL_UNSATISFIED_OBLIGATION",
+            value = "RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE",
             justification = "work around for java 9: https://github.com/spotbugs/spotbugs/issues/493")
     public static void loadLibraryFromJar(String path) throws Exception {
         checkArgument(path.startsWith("/"), "absolute path must start with /");
 
         String[] parts = path.split("/");
-        String filename = (parts.length > 0) ? parts[parts.length - 1] : null;
+        checkArgument(parts.length > 0, "absolute path must contain file name");
 
-        File dir = File.createTempFile("native", "");
-        if (!(dir.mkdir())) {
-            throw new IOException("Failed to create temp directory " + dir.getAbsolutePath());
-        }
-        dir.deleteOnExit();
-        File temp = new File(dir, filename);
+        String filename = parts[parts.length - 1];
+        checkArgument(path.startsWith("/"), "absolute path must start with /");
+
+        Path dir = Files.createTempDirectory("native");
+        dir.toFile().deleteOnExit();
+        File temp = new File(dir.toString(), filename);
         temp.deleteOnExit();
 
         byte[] buffer = new byte[1024];
@@ -82,5 +80,11 @@ public class NativeUtils {
         }
 
         System.load(temp.getAbsolutePath());
+    }
+
+    private static void checkArgument(boolean expression, @NonNull Object errorMessage) {
+        if (!expression) {
+            throw new IllegalArgumentException(String.valueOf(errorMessage));
+        }
     }
 }

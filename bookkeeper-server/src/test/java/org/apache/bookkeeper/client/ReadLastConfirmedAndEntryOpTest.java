@@ -33,7 +33,7 @@ import static org.mockito.Mockito.when;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.buffer.UnpooledByteBufAllocator;
-
+import io.netty.util.ReferenceCounted;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -85,7 +85,7 @@ public class ReadLastConfirmedAndEntryOpTest {
     private ScheduledExecutorService scheduler;
     private OrderedScheduler orderedScheduler;
     private ClientInternalConf internalConf;
-    private EnsemblePlacementPolicy mockPlacementPolicy;
+    private EnsemblePlacementPolicy placementPolicy;
     private LedgerMetadata ledgerMetadata;
     private DistributionSchedule distributionSchedule;
     private DigestManager digestManager;
@@ -121,10 +121,11 @@ public class ReadLastConfirmedAndEntryOpTest {
             .build();
 
         this.mockBookieClient = mock(BookieClient.class);
-        this.mockPlacementPolicy = mock(EnsemblePlacementPolicy.class);
+        //this.mockPlacementPolicy = mock(EnsemblePlacementPolicy.class);
+        this.placementPolicy = new DefaultEnsemblePlacementPolicy();
         this.mockClientCtx = mock(ClientContext.class);
         when(mockClientCtx.getBookieClient()).thenReturn(mockBookieClient);
-        when(mockClientCtx.getPlacementPolicy()).thenReturn(mockPlacementPolicy);
+        when(mockClientCtx.getPlacementPolicy()).thenReturn(placementPolicy);
         when(mockClientCtx.getConf()).thenReturn(internalConf);
         when(mockClientCtx.getScheduler()).thenReturn(orderedScheduler);
         when(mockClientCtx.getMainWorkerPool()).thenReturn(orderedScheduler);
@@ -167,10 +168,15 @@ public class ReadLastConfirmedAndEntryOpTest {
         final long lac = 1L;
 
         ByteBuf data = Unpooled.copiedBuffer("test-speculative-responses", UTF_8);
-        ByteBufList dataWithDigest = digestManager.computeDigestAndPackageForSending(
-            entryId, lac, data.readableBytes(), data);
-        byte[] bytesWithDigest = new byte[dataWithDigest.readableBytes()];
-        assertEquals(bytesWithDigest.length, dataWithDigest.getBytes(bytesWithDigest));
+        ReferenceCounted refCnt = digestManager.computeDigestAndPackageForSending(
+            entryId, lac, data.readableBytes(), data, new byte[20], 0);
+
+        byte[] bytesWithDigest = null;
+        if (refCnt instanceof ByteBufList) {
+            ByteBufList dataWithDigest = (ByteBufList) refCnt;
+            bytesWithDigest = new byte[dataWithDigest.readableBytes()];
+            assertEquals(bytesWithDigest.length, dataWithDigest.getBytes(bytesWithDigest));
+        }
 
         final Map<BookieId, ReadLastConfirmedAndEntryHolder> callbacks =
             Collections.synchronizedMap(new HashMap<>());

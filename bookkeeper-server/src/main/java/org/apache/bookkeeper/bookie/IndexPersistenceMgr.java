@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -274,8 +274,9 @@ public class IndexPersistenceMgr {
                                 // name is the HexString representation of the
                                 // ledgerId.
                                 String ledgerIdInHex = index.getName().replace(RLOC, "").replace(IDX, "");
+                                long ledgerId = Long.parseLong(ledgerIdInHex, 16);
                                 if (index.getName().endsWith(RLOC)) {
-                                    if (findIndexFile(Long.parseLong(ledgerIdInHex)) != null) {
+                                    if (findIndexFile(ledgerId) != null) {
                                         if (!index.delete()) {
                                             LOG.warn("Deleting the rloc file " + index + " failed");
                                         }
@@ -288,7 +289,7 @@ public class IndexPersistenceMgr {
                                         }
                                     }
                                 }
-                                activeLedgers.put(Long.parseLong(ledgerIdInHex, 16), true);
+                                activeLedgers.put(ledgerId, true);
                             }
                         }
                     }
@@ -660,7 +661,7 @@ public class IndexPersistenceMgr {
             fi = getFileInfo(ledgerId, null);
             long size = fi.size();
             // make sure the file size is aligned with index entry size
-            // otherwise we may read incorret data
+            // otherwise we may read incorrect data
             if (0 != size % LedgerEntryPage.getIndexEntrySize()) {
                 LOG.warn("Index file of ledger {} is not aligned with index entry size.", ledgerId);
                 size = size - size % LedgerEntryPage.getIndexEntrySize();

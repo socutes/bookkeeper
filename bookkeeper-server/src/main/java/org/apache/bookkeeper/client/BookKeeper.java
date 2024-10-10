@@ -1,4 +1,4 @@
-/**
+/*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -25,13 +25,11 @@ import static org.apache.bookkeeper.bookie.BookKeeperServerStats.WATCHER_SCOPE;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
-
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.buffer.UnpooledByteBufAllocator;
 import io.netty.channel.EventLoopGroup;
 import io.netty.util.HashedWheelTimer;
 import io.netty.util.concurrent.DefaultThreadFactory;
-
 import java.io.IOException;
 import java.net.URI;
 import java.util.Collections;
@@ -41,11 +39,11 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-
 import org.apache.bookkeeper.bookie.BookKeeperServerStats;
 import org.apache.bookkeeper.client.AsyncCallback.CreateCallback;
 import org.apache.bookkeeper.client.AsyncCallback.DeleteCallback;
@@ -81,7 +79,6 @@ import org.apache.bookkeeper.meta.LedgerManagerFactory;
 import org.apache.bookkeeper.meta.MetadataClientDriver;
 import org.apache.bookkeeper.meta.MetadataDrivers;
 import org.apache.bookkeeper.meta.exceptions.MetadataException;
-import org.apache.bookkeeper.meta.zk.ZKMetadataClientDriver;
 import org.apache.bookkeeper.net.BookieId;
 import org.apache.bookkeeper.net.DNSToSwitchMapping;
 import org.apache.bookkeeper.proto.BookieAddressResolver;
@@ -91,7 +88,6 @@ import org.apache.bookkeeper.proto.DataFormats;
 import org.apache.bookkeeper.stats.NullStatsLogger;
 import org.apache.bookkeeper.stats.StatsLogger;
 import org.apache.bookkeeper.util.EventLoopUtil;
-import org.apache.bookkeeper.util.SafeRunnable;
 import org.apache.bookkeeper.versioning.Versioned;
 import org.apache.commons.configuration.ConfigurationException;
 import org.apache.zookeeper.KeeperException;
@@ -122,6 +118,9 @@ public class BookKeeper implements org.apache.bookkeeper.client.api.BookKeeper {
     private final StatsLogger statsLogger;
     private final BookKeeperClientStats clientStats;
     private final double bookieQuarantineRatio;
+
+    // Inner high priority thread for WatchTask. Disable external use.
+    private final OrderedScheduler highPriorityTaskExecutor;
 
     // whether the event loop group is one we created, or is owned by whoever
     // instantiated us
@@ -428,6 +427,8 @@ public class BookKeeper implements org.apache.bookkeeper.client.api.BookKeeper {
 
         // initialize resources
         this.scheduler = OrderedScheduler.newSchedulerBuilder().numThreads(1).name("BookKeeperClientScheduler").build();
+        this.highPriorityTaskExecutor =
+                OrderedScheduler.newSchedulerBuilder().numThreads(1).name("BookKeeperHighPriorityThread").build();
         this.mainWorkerPool = OrderedExecutor.newBuilder()
                 .name("BookKeeperClientWorker")
                 .numThreads(conf.getNumWorkerThreads())
@@ -453,7 +454,7 @@ public class BookKeeper implements org.apache.bookkeeper.client.api.BookKeeper {
             }
             this.metadataDriver.initialize(
                 conf,
-                scheduler,
+                highPriorityTaskExecutor,
                 rootStatsLogger,
                 Optional.ofNullable(zkc));
         } catch (ConfigurationException ce) {
@@ -482,6 +483,7 @@ public class BookKeeper implements org.apache.bookkeeper.client.api.BookKeeper {
                     .poolingConcurrency(conf.getAllocatorPoolingConcurrency())
                     .outOfMemoryPolicy(conf.getAllocatorOutOfMemoryPolicy())
                     .leakDetectionPolicy(conf.getAllocatorLeakDetectionPolicy())
+                    .exitOnOutOfMemory(conf.exitOnOutOfMemory())
                     .build();
         }
 
@@ -497,8 +499,9 @@ public class BookKeeper implements org.apache.bookkeeper.client.api.BookKeeper {
             this.ownTimer = false;
         }
 
-        BookieAddressResolver bookieAddressResolver =
-                new DefaultBookieAddressResolver(metadataDriver.getRegistrationClient());
+        BookieAddressResolver bookieAddressResolver = conf.getBookieAddressResolverEnabled()
+                ? new DefaultBookieAddressResolver(metadataDriver.getRegistrationClient())
+                : new BookieAddressResolverDisabled();
         if (dnsResolver != null) {
             dnsResolver.setBookieAddressResolver(bookieAddressResolver);
         }
@@ -553,6 +556,7 @@ public class BookKeeper implements org.apache.bookkeeper.client.api.BookKeeper {
         statsLogger = NullStatsLogger.INSTANCE;
         clientStats = BookKeeperClientStats.newInstance(statsLogger);
         scheduler = null;
+        highPriorityTaskExecutor = null;
         requestTimer = null;
         metadataDriver = null;
         placementPolicy = null;
@@ -570,7 +574,7 @@ public class BookKeeper implements org.apache.bookkeeper.client.api.BookKeeper {
         bookieQuarantineRatio = 1.0;
     }
 
-    private EnsemblePlacementPolicy initializeEnsemblePlacementPolicy(ClientConfiguration conf,
+    protected EnsemblePlacementPolicy initializeEnsemblePlacementPolicy(ClientConfiguration conf,
                                                                       DNSToSwitchMapping dnsResolver,
                                                                       HashedWheelTimer timer,
                                                                       FeatureProvider featureProvider,
@@ -604,19 +608,35 @@ public class BookKeeper implements org.apache.bookkeeper.client.api.BookKeeper {
 
     void scheduleBookieHealthCheckIfEnabled(ClientConfiguration conf) {
         if (conf.isBookieHealthCheckEnabled()) {
-            scheduler.scheduleAtFixedRate(new SafeRunnable() {
-
-                @Override
-                public void safeRun() {
-                    checkForFaultyBookies();
-                }
-                    }, conf.getBookieHealthCheckIntervalSeconds(), conf.getBookieHealthCheckIntervalSeconds(),
+            scheduler.scheduleAtFixedRate(
+                    () -> checkForFaultyBookies(),
+                    conf.getBookieHealthCheckIntervalSeconds(),
+                    conf.getBookieHealthCheckIntervalSeconds(),
                     TimeUnit.SECONDS);
         }
     }
 
     void checkForFaultyBookies() {
         List<BookieId> faultyBookies = bookieClient.getFaultyBookies();
+        if (faultyBookies.isEmpty()) {
+            return;
+        }
+
+        boolean isEnabled = false;
+        try {
+            isEnabled = metadataDriver.isHealthCheckEnabled().get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            LOG.error("Cannot verify if healthcheck is enabled", e);
+        } catch (ExecutionException e) {
+            LOG.error("Cannot verify if healthcheck is enabled", e.getCause());
+        }
+        if (!isEnabled) {
+            LOG.info("Health checks is currently disabled!");
+            bookieWatcher.releaseAllQuarantinedBookies();
+            return;
+        }
+
         for (BookieId faultyBookie : faultyBookies) {
             if (Math.random() <= bookieQuarantineRatio) {
                 bookieWatcher.quarantineBookie(faultyBookie);
@@ -633,6 +653,11 @@ public class BookKeeper implements org.apache.bookkeeper.client.api.BookKeeper {
     @VisibleForTesting
     public LedgerManager getLedgerManager() {
         return ledgerManager;
+    }
+
+    @VisibleForTesting
+    public LedgerManagerFactory getLedgerManagerFactory() {
+        return ledgerManagerFactory;
     }
 
     @VisibleForTesting
@@ -688,7 +713,7 @@ public class BookKeeper implements org.apache.bookkeeper.client.api.BookKeeper {
      * cheap to compute but does not protect against byzantine bookies (i.e., a
      * bookie might report fake bytes and a matching CRC32). The MAC code is more
      * expensive to compute, but is protected by a password, i.e., a bookie can't
-     * report fake bytes with a mathching MAC unless it knows the password.
+     * report fake bytes with a matching MAC unless it knows the password.
      * The CRC32C, which use SSE processor instruction, has better performance than CRC32.
      * Legacy DigestType for backward compatibility. If we want to add new DigestType,
      * we should add it in here, client.api.DigestType and DigestType in DataFormats.proto.
@@ -741,10 +766,6 @@ public class BookKeeper implements org.apache.bookkeeper.client.api.BookKeeper {
                     throw new IllegalArgumentException("Unable to convert digest type " + this);
             }
         }
-    }
-
-    ZooKeeper getZkHandle() {
-        return ((ZKMetadataClientDriver) metadataDriver).getZk();
     }
 
     protected ClientConfiguration getConf() {
@@ -1447,6 +1468,14 @@ public class BookKeeper implements org.apache.bookkeeper.client.api.BookKeeper {
         if (!scheduler.awaitTermination(10, TimeUnit.SECONDS)) {
             LOG.warn("The scheduler did not shutdown cleanly");
         }
+
+        // Close the watchTask scheduler
+        highPriorityTaskExecutor.shutdown();
+        if (!highPriorityTaskExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
+            LOG.warn("The highPriorityTaskExecutor for WatchTask did not shutdown cleanly, interrupting");
+            highPriorityTaskExecutor.shutdownNow();
+        }
+
         mainWorkerPool.shutdown();
         if (!mainWorkerPool.awaitTermination(10, TimeUnit.SECONDS)) {
             LOG.warn("The mainWorkerPool did not shutdown cleanly");
@@ -1594,6 +1623,11 @@ public class BookKeeper implements org.apache.bookkeeper.client.api.BookKeeper {
         });
     }
 
+    @Override
+    public CompletableFuture<Boolean> isDriverMetadataServiceAvailable() {
+        return metadataDriver.isMetadataServiceAvailable();
+    }
+
     private final ClientContext clientCtx = new ClientContext() {
             @Override
             public ClientInternalConf getConf() {
@@ -1646,7 +1680,7 @@ public class BookKeeper implements org.apache.bookkeeper.client.api.BookKeeper {
             }
         };
 
-    ClientContext getClientCtx() {
+    public ClientContext getClientCtx() {
         return clientCtx;
     }
 }

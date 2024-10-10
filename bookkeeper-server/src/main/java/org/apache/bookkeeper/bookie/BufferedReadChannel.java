@@ -24,14 +24,13 @@ package org.apache.bookkeeper.bookie;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
-
 import java.io.IOException;
 import java.nio.channels.FileChannel;
 
 /**
  * A Buffered channel without a write buffer. Only reads are buffered.
  */
-public class BufferedReadChannel extends BufferedChannelBase  {
+public class BufferedReadChannel extends BufferedChannelBase {
 
     // The capacity of the read buffer.
     protected final int readCapacity;
@@ -44,9 +43,16 @@ public class BufferedReadChannel extends BufferedChannelBase  {
 
     long invocationCount = 0;
     long cacheHitCount = 0;
+    private volatile long fileSize = -1;
+    final boolean sealed;
 
     public BufferedReadChannel(FileChannel fileChannel, int readCapacity) {
+        this(fileChannel, readCapacity, false);
+    }
+
+    public BufferedReadChannel(FileChannel fileChannel, int readCapacity, boolean sealed) {
         super(fileChannel);
+        this.sealed = sealed;
         this.readCapacity = readCapacity;
         this.readBuffer = Unpooled.buffer(readCapacity);
     }
@@ -65,10 +71,26 @@ public class BufferedReadChannel extends BufferedChannelBase  {
         return read(dest, pos, dest.writableBytes());
     }
 
+    @Override
+    public long size() throws IOException {
+        if (sealed) {
+            if (fileSize == -1) {
+                synchronized (this) {
+                    if (fileSize == -1) {
+                        fileSize = validateAndGetFileChannel().size();
+                    }
+                }
+            }
+            return fileSize;
+        } else {
+            return validateAndGetFileChannel().size();
+        }
+    }
+
     public synchronized int read(ByteBuf dest, long pos, int length) throws IOException {
         invocationCount++;
         long currentPosition = pos;
-        long eof = validateAndGetFileChannel().size();
+        long eof = size();
         // return -1 if the given position is greater than or equal to the file's current size.
         if (pos >= eof) {
             return -1;

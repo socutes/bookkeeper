@@ -18,17 +18,13 @@
 package org.apache.bookkeeper.tests.backwardcompat
 
 import com.github.dockerjava.api.DockerClient
-
 import org.apache.bookkeeper.tests.integration.utils.BookKeeperClusterUtils
 import org.apache.bookkeeper.tests.integration.utils.MavenClassLoader
-
 import org.jboss.arquillian.junit.Arquillian
 import org.jboss.arquillian.test.api.ArquillianResource
-
 import org.junit.Assert
 import org.junit.Test
 import org.junit.runner.RunWith
-
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
@@ -36,9 +32,6 @@ import org.slf4j.LoggerFactory
 class TestCompatUpgradeWithHostnameBookieId {
     private static final Logger LOG = LoggerFactory.getLogger(TestCompatUpgradeWithHostnameBookieId.class)
     private static byte[] PASSWD = "foobar".getBytes()
-
-    private def oldClientVersions = ["4.4.0", "4.5.1", "4.6.2", "4.7.2", "4.8.2", "4.9.2",
-                                     "4.10.0", "4.11.1", "4.12.1", "4.13.0", "4.14.0" ]
 
     @ArquillianResource
     DockerClient docker
@@ -62,7 +55,7 @@ class TestCompatUpgradeWithHostnameBookieId {
     }
 
     /**
-     * Test compatability between version old version and the current version.
+     * Test compatibility between version old version and the current version.
      * - 4.1.0 server restarts with useHostNameAsBookieID=true.
      * - Write ledgers with old and new clients
      * - Read ledgers written by old clients.
@@ -73,7 +66,7 @@ class TestCompatUpgradeWithHostnameBookieId {
         BookKeeperClusterUtils.legacyMetadataFormat(docker)
         String zookeeper = BookKeeperClusterUtils.zookeeperConnectString(docker)
 
-        String currentVersion = System.getProperty("currentVersion")
+        String currentVersion = BookKeeperClusterUtils.CURRENT_VERSION
 
         Assert.assertTrue(BookKeeperClusterUtils.startAllBookiesWithVersion(docker, "4.1.0"))
 
@@ -111,7 +104,7 @@ class TestCompatUpgradeWithHostnameBookieId {
             ledger420r.close()
 
             // Ensure we can write and read new ledgers with all client versions
-            oldClientVersions.each{
+            BookKeeperClusterUtils.OLD_CLIENT_VERSIONS.each{
                 LOG.info("Testing ledger creation for version {}", it)
                 def oldCL = MavenClassLoader.forBookKeeperVersion(it)
                 def oldBK = oldCL.newBookKeeper(zookeeper)

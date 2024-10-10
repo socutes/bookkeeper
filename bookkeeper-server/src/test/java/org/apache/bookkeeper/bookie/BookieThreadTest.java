@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,7 +19,6 @@ package org.apache.bookkeeper.bookie;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-
 import org.junit.Assert;
 import org.junit.Test;
 

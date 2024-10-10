@@ -20,9 +20,9 @@ package org.apache.bookkeeper.tools.cli.commands.bookie;
 
 import com.beust.jcommander.Parameter;
 import com.google.common.util.concurrent.UncheckedExecutionException;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import java.util.function.Consumer;
-
 import lombok.Setter;
 import lombok.experimental.Accessors;
 import org.apache.bookkeeper.bookie.BookieImpl;
@@ -136,8 +136,8 @@ public class LedgerCommand extends BookieCommand<LedgerCommand.LedgerFlags> {
 
     private boolean dumpLedgerInfo(long ledgerId, ServerConfiguration conf) {
         try {
-            DbLedgerStorage.readLedgerIndexEntries(ledgerId, conf, (currentEntry, entryLodId, position) -> System.out
-                    .println("entry " + currentEntry + "\t:\t(log: " + entryLodId + ", pos: " + position + ")"));
+            DbLedgerStorage.readLedgerIndexEntries(ledgerId, conf, (currentEntry, entryLogId, position) -> System.out
+                    .println("entry " + currentEntry + "\t:\t(log: " + entryLogId + ", pos: " + position + ")"));
         } catch (IOException e) {
             System.err.printf("ERROR: initializing dbLedgerStorage %s", e.getMessage());
             return false;
@@ -164,6 +164,7 @@ public class LedgerCommand extends BookieCommand<LedgerCommand.LedgerFlags> {
         }
     }
 
+    @SuppressFBWarnings("RCN_REDUNDANT_NULLCHECK_WOULD_HAVE_BEEN_A_NPE")
     private boolean printPageEntries(LedgerCache.PageEntries page) {
         final MutableLong curEntry = new MutableLong(page.getFirstEntry());
         try (LedgerEntryPage lep = page.getLEP()) {
